@@ -209,6 +209,15 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# AV SafePlan external assets and run outputs
+av_safeplan/.env
+av_safeplan/.external/
+av_safeplan/checkpoints/
+av_safeplan/models/
+av_safeplan/logs/
+av_safeplan/outputs/
+av_safeplan/runs/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

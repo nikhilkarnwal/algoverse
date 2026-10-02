@@ -1,0 +1,41 @@
+project: av_safeplan
+
+carla:
+  version: "0.9.15"
+  host: "127.0.0.1"
+  port: 2000
+  traffic_manager_port: 8000
+  timeout_seconds: 20.0
+  map: "Town12"
+  synchronous: true
+  fixed_delta_seconds: 0.05
+  seed: 2026
+
+simlingo:
+  repository: "https://github.com/RenzKa/simlingo.git"
+  revision: "743b243afd6cf5ff51b9fa1f8cac86f22d569684"
+  checkpoint:
+    repository: "RenzKa/simlingo"
+    revision: "26c7c89e797d4e25bbf640013317af8da26a5454"
+    relative_path: "simlingo/checkpoints/epoch=013.ckpt/pytorch_model.pt"
+    minimum_size_bytes: 2500000000
+  vision_model:
+    repository: "OpenGVLab/InternVL2-1B"
+
+runtime:
+  python: "3.8.18"
+  torch: "2.2.0"
+  torchvision: "0.17.0"
+  transformers: "4.46.3"
+  flash_attn: "2.7.0.post2"
+  cuda_required: true
+
+paths:
+  carla_root_env: "CARLA_ROOT"
+  simlingo_root_env: "SIMLINGO_ROOT"
+  checkpoint_env: "SIMLINGO_CHECKPOINT"
+  model_cache_env: "HF_HOME"
+
+smoke:
+  steps: 200
+  behavior: "normal"
