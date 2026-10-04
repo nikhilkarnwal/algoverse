@@ -21,8 +21,11 @@ HF_HOME="${HF_HOME:-${CACHE_ROOT}/huggingface}"
 OUTPUT_ROOT="${AV_SAFEPLAN_OUTPUT_ROOT:-${COLAB_ROOT}/outputs/trajectories}"
 
 DOWNLOAD_CARLA="${AV_SAFEPLAN_DOWNLOAD_CARLA:-1}"
+DOWNLOAD_ADDITIONAL_MAPS="${AV_SAFEPLAN_DOWNLOAD_ADDITIONAL_MAPS:-0}"
 DOWNLOAD_MODELS="${AV_SAFEPLAN_DOWNLOAD_MODELS:-1}"
 INSTALL_FLASH_ATTN="${AV_SAFEPLAN_INSTALL_FLASH_ATTN:-1}"
+KEEP_DOWNLOAD_ARCHIVES="${AV_SAFEPLAN_KEEP_DOWNLOAD_ARCHIVES:-0}"
+CARLA_MIN_FREE_GB="${AV_SAFEPLAN_CARLA_MIN_FREE_GB:-30}"
 MAX_JOBS="${MAX_JOBS:-2}"
 
 SIMLINGO_REVISION="743b243afd6cf5ff51b9fa1f8cac86f22d569684"
@@ -31,6 +34,89 @@ CARLA_ARCHIVE_URL="https://carla-releases.s3.us-east-005.backblazeb2.com/Linux/C
 CARLA_MAPS_URL="https://carla-releases.s3.us-east-005.backblazeb2.com/Linux/AdditionalMaps_0.9.15.tar.gz"
 
 export MAMBA_ROOT_PREFIX HF_HOME MAX_JOBS
+
+available_kib() {
+  df -Pk "$1" | awk 'NR == 2 {print $4}'
+}
+
+require_free_space() {
+  local target="$1"
+  local required_gb="$2"
+  local required_kib=$((required_gb * 1024 * 1024))
+  local free_kib
+  free_kib="$(available_kib "${target}")"
+  if [[ "${free_kib}" -lt "${required_kib}" ]]; then
+    echo "Insufficient free disk space for CARLA extraction." >&2
+    echo "Required: at least ${required_gb} GiB; available: $((free_kib / 1024 / 1024)) GiB." >&2
+    df -h "${target}" >&2
+    echo "Keep extracted CARLA files under /content and restart the Colab runtime if old downloads filled the disk." >&2
+    exit 1
+  fi
+}
+
+archive_is_valid() {
+  tar -tzf "$1" >/dev/null 2>&1
+}
+
+download_tar_archive() {
+  local url="$1"
+  local archive="$2"
+
+  if [[ -f "${archive}" ]] && archive_is_valid "${archive}"; then
+    echo "Using validated archive ${archive}"
+    return
+  fi
+
+  if [[ -f "${archive}" ]]; then
+    echo "Resuming incomplete archive ${archive}"
+    if ! curl -L --fail --retry 3 --continue-at - -o "${archive}" "${url}"; then
+      echo "Resume failed. Remove ${archive} and rerun setup." >&2
+      exit 1
+    fi
+  else
+    curl -L --fail --retry 3 -o "${archive}" "${url}"
+  fi
+
+  if ! archive_is_valid "${archive}"; then
+    echo "Archive validation failed: ${archive}" >&2
+    echo "Remove that file, ensure enough free disk space, and rerun setup." >&2
+    exit 1
+  fi
+}
+
+extract_carla_base() {
+  local archive="$1"
+  local staging_root="${CARLA_ROOT}.extracting"
+
+  if [[ -e "${CARLA_ROOT}" ]]; then
+    echo "An incomplete or unverified CARLA directory already exists:" >&2
+    echo "  ${CARLA_ROOT}" >&2
+    echo "Inspect it, then remove or rename it before rerunning setup." >&2
+    exit 1
+  fi
+  if [[ -e "${staging_root}" ]]; then
+    echo "A previous CARLA staging directory already exists:" >&2
+    echo "  ${staging_root}" >&2
+    echo "Inspect it, then remove or rename it before rerunning setup." >&2
+    exit 1
+  fi
+
+  mkdir -p "${staging_root}"
+  echo "Extracting CARLA into ${staging_root}..."
+  if ! tar -xzf "${archive}" -C "${staging_root}"; then
+    echo "CARLA extraction failed. The partial files remain at:" >&2
+    echo "  ${staging_root}" >&2
+    df -h "${staging_root}" >&2
+    echo "Free disk space, remove or rename that staging directory, and rerun setup." >&2
+    exit 1
+  fi
+  mv "${staging_root}" "${CARLA_ROOT}"
+
+  if [[ ! -x "${CARLA_ROOT}/CarlaUE4.sh" ]]; then
+    echo "CARLA archive extracted but CarlaUE4.sh is missing." >&2
+    exit 1
+  fi
+}
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "Colab setup requires a Linux runtime." >&2
@@ -48,6 +134,18 @@ GPU_MEMORY_MIB="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,noun
 if [[ "${GPU_MEMORY_MIB}" -lt 20000 ]]; then
   echo "Warning: ${GPU_MEMORY_MIB} MiB of GPU memory may be tight for CARLA and SimLingo together." >&2
   echo "Use low-quality CARLA rendering, short routes, and prefer an L4/A100 runtime when available." >&2
+fi
+
+if [[ "${DOWNLOAD_CARLA}" == "1" && ! -f "${CARLA_ROOT}/.av-safeplan-install-complete" ]]; then
+  mkdir -p "$(dirname "${CARLA_ROOT}")"
+  require_free_space "$(dirname "${CARLA_ROOT}")" "${CARLA_MIN_FREE_GB}"
+  if [[ -e "${CARLA_ROOT}" || -e "${CARLA_ROOT}.extracting" ]]; then
+    echo "A previous CARLA installation or staging directory is incomplete:" >&2
+    echo "  ${CARLA_ROOT}" >&2
+    echo "  ${CARLA_ROOT}.extracting" >&2
+    echo "Inspect those paths, then remove or rename the incomplete one and rerun setup." >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "${COLAB_ROOT}/bin" "${EXTERNAL_ROOT}" "${CACHE_ROOT}" "${HF_HOME}" "${OUTPUT_ROOT}"
@@ -116,15 +214,31 @@ fi
 git -C "${SIMLINGO_ROOT}" fetch --depth 1 origin "${SIMLINGO_REVISION}"
 git -C "${SIMLINGO_ROOT}" checkout --detach "${SIMLINGO_REVISION}"
 
-if [[ "${DOWNLOAD_CARLA}" == "1" && ! -x "${CARLA_ROOT}/CarlaUE4.sh" ]]; then
-  echo "Downloading CARLA 0.9.15 and Town12 assets..."
-  mkdir -p "${CARLA_ROOT}" "${CACHE_ROOT}/carla"
-  curl -L --fail --retry 3 -o "${CACHE_ROOT}/carla/CARLA_0.9.15.tar.gz" "${CARLA_ARCHIVE_URL}"
-  tar -xf "${CACHE_ROOT}/carla/CARLA_0.9.15.tar.gz" -C "${CARLA_ROOT}"
-  curl -L --fail --retry 3 -o "${CACHE_ROOT}/carla/AdditionalMaps_0.9.15.tar.gz" "${CARLA_MAPS_URL}"
-  mkdir -p "${CARLA_ROOT}/Import"
-  cp "${CACHE_ROOT}/carla/AdditionalMaps_0.9.15.tar.gz" "${CARLA_ROOT}/Import/"
-  (cd "${CARLA_ROOT}" && bash ImportAssets.sh)
+if [[ "${DOWNLOAD_CARLA}" == "1" && ! -f "${CARLA_ROOT}/.av-safeplan-install-complete" ]]; then
+  echo "Installing CARLA 0.9.15..."
+  mkdir -p "${CACHE_ROOT}/carla"
+
+  CARLA_ARCHIVE="${CACHE_ROOT}/carla/CARLA_0.9.15.tar.gz"
+  download_tar_archive "${CARLA_ARCHIVE_URL}" "${CARLA_ARCHIVE}"
+  extract_carla_base "${CARLA_ARCHIVE}"
+
+  if [[ "${KEEP_DOWNLOAD_ARCHIVES}" != "1" ]]; then
+    rm -f -- "${CARLA_ARCHIVE}"
+  fi
+
+  if [[ "${DOWNLOAD_ADDITIONAL_MAPS}" == "1" ]]; then
+    echo "Installing optional CARLA additional maps..."
+    CARLA_MAPS_ARCHIVE="${CACHE_ROOT}/carla/AdditionalMaps_0.9.15.tar.gz"
+    download_tar_archive "${CARLA_MAPS_URL}" "${CARLA_MAPS_ARCHIVE}"
+    mkdir -p "${CARLA_ROOT}/Import"
+    cp "${CARLA_MAPS_ARCHIVE}" "${CARLA_ROOT}/Import/"
+    (cd "${CARLA_ROOT}" && bash ImportAssets.sh)
+    if [[ "${KEEP_DOWNLOAD_ARCHIVES}" != "1" ]]; then
+      rm -f -- "${CARLA_MAPS_ARCHIVE}" "${CARLA_ROOT}/Import/AdditionalMaps_0.9.15.tar.gz"
+    fi
+  fi
+
+  touch "${CARLA_ROOT}/.av-safeplan-install-complete"
 fi
 
 if [[ "${DOWNLOAD_MODELS}" == "1" ]]; then
