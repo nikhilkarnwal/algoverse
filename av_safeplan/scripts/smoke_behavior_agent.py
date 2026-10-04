@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from av_safeplan.carla.synchronous import SynchronousWorld
+from av_safeplan.carla.recording import RgbTrajectoryRecorder, create_run_directory
 from av_safeplan.environment.checks import apply_python_paths
 from av_safeplan.settings import load_stack
 
@@ -46,6 +47,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config" / "stack.yaml")
     parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Root directory for trajectory runs (defaults to the stack configuration)",
+    )
+    parser.add_argument(
+        "--run-name",
+        default=None,
+        help="Optional directory name for this run; existing directories are not overwritten",
+    )
+    parser.add_argument(
+        "--no-images",
+        action="store_true",
+        help="Run the route without attaching the trajectory camera",
+    )
     arguments = parser.parse_args()
 
     settings = load_stack(arguments.config)
@@ -68,6 +85,8 @@ def main() -> int:
     traffic_manager = client.get_trafficmanager(settings.carla.traffic_manager_port)
     traffic_manager.set_random_device_seed(settings.carla.seed)
     actor = None
+    recorder = None
+    run_directory = None
     steps = arguments.steps or settings.smoke.steps
 
     try:
@@ -76,13 +95,38 @@ def main() -> int:
             agent = BehaviorAgent(actor, behavior=settings.smoke.behavior)
             agent.set_destination(destination)
 
+            recording_enabled = settings.recording.enabled and not arguments.no_images
+            if recording_enabled:
+                output_root = arguments.output_dir or settings.recording.output_root
+                if not output_root.is_absolute():
+                    output_root = PROJECT_ROOT / output_root
+                run_directory = create_run_directory(
+                    output_root.resolve(),
+                    settings.carla.map_name,
+                    settings.carla.seed,
+                    arguments.run_name,
+                )
+                recorder = RgbTrajectoryRecorder(
+                    world,
+                    actor,
+                    settings.recording,
+                    run_directory,
+                )
+                recorder.start()
+
             executed = 0
             for _ in range(steps):
-                world.tick()
+                world_frame = world.tick()
                 control = agent.run_step()
                 if not isinstance(control, carla.VehicleControl):
                     raise TypeError("Behavior Agent returned an invalid control object")
                 actor.apply_control(control)
+                if recorder is not None:
+                    recorder.save_frame(
+                        world_frame,
+                        control,
+                        timeout_seconds=settings.carla.timeout_seconds,
+                    )
                 executed += 1
                 if agent.done():
                     break
@@ -90,9 +134,17 @@ def main() -> int:
             print("Behavior Agent smoke run passed: {} ticks, destination_reached={}".format(
                 executed, agent.done()
             ))
+            if recorder is not None:
+                print("Saved {} trajectory images to {}".format(
+                    recorder.saved_images, run_directory
+                ))
     finally:
-        if actor is not None and actor.is_alive:
-            actor.destroy()
+        try:
+            if recorder is not None:
+                recorder.close()
+        finally:
+            if actor is not None and actor.is_alive:
+                actor.destroy()
     return 0
 
 

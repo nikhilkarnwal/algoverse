@@ -39,3 +39,18 @@ paths:
 smoke:
   steps: 200
   behavior: "normal"
+
+recording:
+  enabled: true
+  output_root: "outputs/trajectories"
+  frame_stride: 1
+  image_width: 960
+  image_height: 540
+  field_of_view: 90.0
+  camera:
+    x: 1.5
+    y: 0.0
+    z: 2.4
+    pitch: -10.0
+    yaw: 0.0
+    roll: 0.0

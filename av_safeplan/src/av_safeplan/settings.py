@@ -56,12 +56,34 @@ class SmokeSettings:
 
 
 @dataclass(frozen=True)
+class CameraSettings:
+    x: float
+    y: float
+    z: float
+    pitch: float
+    yaw: float
+    roll: float
+
+
+@dataclass(frozen=True)
+class RecordingSettings:
+    enabled: bool
+    output_root: Path
+    frame_stride: int
+    image_width: int
+    image_height: int
+    field_of_view: float
+    camera: CameraSettings
+
+
+@dataclass(frozen=True)
 class StackSettings:
     project: str
     carla: CarlaSettings
     simlingo: SimLingoSettings
     runtime: RuntimeSettings
     smoke: SmokeSettings
+    recording: RecordingSettings
     carla_root: Optional[Path]
     model_cache: Optional[Path]
 
@@ -90,6 +112,8 @@ def load_stack(path: Path) -> StackSettings:
     runtime_data = _required(data, "runtime")
     path_data = _required(data, "paths")
     smoke_data = _required(data, "smoke")
+    recording_data = _required(data, "recording")
+    camera_data = _required(recording_data, "camera")
 
     host = os.environ.get("CARLA_HOST", str(_required(carla_data, "host")))
     port = int(os.environ.get("CARLA_PORT", _required(carla_data, "port")))
@@ -101,6 +125,9 @@ def load_stack(path: Path) -> StackSettings:
         revision=str(_required(checkpoint_data, "revision")),
         relative_path=str(_required(checkpoint_data, "relative_path")),
         minimum_size_bytes=int(_required(checkpoint_data, "minimum_size_bytes")),
+    )
+    configured_output_root = os.environ.get(
+        "AV_SAFEPLAN_OUTPUT_ROOT", str(_required(recording_data, "output_root"))
     )
 
     return StackSettings(
@@ -137,6 +164,22 @@ def load_stack(path: Path) -> StackSettings:
         smoke=SmokeSettings(
             steps=int(_required(smoke_data, "steps")),
             behavior=str(_required(smoke_data, "behavior")),
+        ),
+        recording=RecordingSettings(
+            enabled=bool(_required(recording_data, "enabled")),
+            output_root=Path(configured_output_root).expanduser(),
+            frame_stride=int(_required(recording_data, "frame_stride")),
+            image_width=int(_required(recording_data, "image_width")),
+            image_height=int(_required(recording_data, "image_height")),
+            field_of_view=float(_required(recording_data, "field_of_view")),
+            camera=CameraSettings(
+                x=float(_required(camera_data, "x")),
+                y=float(_required(camera_data, "y")),
+                z=float(_required(camera_data, "z")),
+                pitch=float(_required(camera_data, "pitch")),
+                yaw=float(_required(camera_data, "yaw")),
+                roll=float(_required(camera_data, "roll")),
+            ),
         ),
         carla_root=_environment_path(str(_required(path_data, "carla_root_env"))),
         model_cache=_environment_path(str(_required(path_data, "model_cache_env"))),
