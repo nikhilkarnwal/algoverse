@@ -136,6 +136,8 @@ If CARLA starts but reports that Town12 is unavailable, install only the missing
 ./scripts/run_behavior_trajectory_colab.sh --steps 200
 ```
 
+The focused installer deliberately does not call CARLA 0.9.15's `ImportAssets.sh`. That upstream script treats same-age files shared by the base and Additional Maps packages as fatal errors. The project installer preserves those existing base files, extracts missing assets, and still propagates genuine archive or disk failures.
+
 ## Platform expectations
 
 Closed-loop SimLingo evaluation requires Linux with an NVIDIA GPU. The environment uses CUDA 12.1 packages. CARLA and the SimLingo checkpoint are large external assets and should live outside the Git checkout.

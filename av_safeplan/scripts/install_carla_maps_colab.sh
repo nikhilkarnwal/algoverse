@@ -62,7 +62,11 @@ else
 fi
 
 echo "Importing CARLA additional maps. This can take several minutes..."
-(cd "${CARLA_ROOT}" && bash ImportAssets.sh)
+# CARLA 0.9.15's ImportAssets.sh uses --keep-newer-files. The official
+# Additional Maps archive overlaps files from the base package, so GNU tar
+# reports those harmless overlaps as errors. --skip-old-files preserves the
+# installed base files without turning duplicates into a failed import.
+tar --skip-old-files --no-same-owner -xzf "${MAPS_ARCHIVE}" -C "${CARLA_ROOT}"
 
 if ! find "${CARLA_ROOT}/CarlaUE4/Content" -iname '*Town12*' -print -quit | grep -q .; then
   echo "Map import completed but Town12 assets were not found." >&2
