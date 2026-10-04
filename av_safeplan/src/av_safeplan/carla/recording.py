@@ -4,9 +4,54 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from av_safeplan.settings import RecordingSettings
+
+
+def build_trajectory_record(
+    world_frame: int,
+    sensor_frame: int,
+    timestamp_seconds: float,
+    image_path: Path,
+    control: Mapping[str, Any],
+    location: Mapping[str, float],
+    rotation: Mapping[str, float],
+    velocity: Mapping[str, float],
+) -> Dict[str, Any]:
+    """Build the shared trajectory schema used by real and synthetic runs."""
+    return {
+        "world_frame": int(world_frame),
+        "sensor_frame": int(sensor_frame),
+        "timestamp_seconds": float(timestamp_seconds),
+        "image": str(image_path),
+        "control": {
+            "steer": float(control["steer"]),
+            "throttle": float(control["throttle"]),
+            "brake": float(control["brake"]),
+            "hand_brake": bool(control["hand_brake"]),
+            "reverse": bool(control["reverse"]),
+        },
+        "ego": {
+            "location": {axis: float(location[axis]) for axis in ("x", "y", "z")},
+            "rotation": {axis: float(rotation[axis]) for axis in ("pitch", "yaw", "roll")},
+            "velocity": {axis: float(velocity[axis]) for axis in ("x", "y", "z")},
+        },
+    }
+
+
+class TrajectoryMetadataWriter:
+    """Append trajectory records without depending on a simulator backend."""
+
+    def __init__(self, metadata_path: Path):
+        self.metadata_path = metadata_path
+        self.metadata_path.touch(exist_ok=False)
+        self.records_written = 0
+
+    def append(self, record: Mapping[str, Any]) -> None:
+        with self.metadata_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(dict(record), sort_keys=True) + "\n")
+        self.records_written += 1
 
 
 def create_run_directory(output_root: Path, map_name: str, seed: int, run_name: Optional[str]) -> Path:
@@ -40,6 +85,7 @@ class RgbTrajectoryRecorder:
         self.run_directory = run_directory
         self.image_directory = run_directory / "rgb"
         self.metadata_path = run_directory / "trajectory.jsonl"
+        self._metadata_writer = TrajectoryMetadataWriter(self.metadata_path)
         if settings.frame_stride < 1:
             raise ValueError("Recording frame_stride must be at least 1")
         if settings.image_width < 1 or settings.image_height < 1:
@@ -92,38 +138,31 @@ class RgbTrajectoryRecorder:
 
         transform = self.ego_vehicle.get_transform()
         velocity = self.ego_vehicle.get_velocity()
-        record: Dict[str, Any] = {
-            "world_frame": int(world_frame),
-            "sensor_frame": int(image.frame),
-            "timestamp_seconds": float(image.timestamp),
-            "image": str(relative_image_path),
-            "control": {
-                "steer": float(control.steer),
-                "throttle": float(control.throttle),
-                "brake": float(control.brake),
-                "hand_brake": bool(control.hand_brake),
-                "reverse": bool(control.reverse),
+        record = build_trajectory_record(
+            world_frame=world_frame,
+            sensor_frame=image.frame,
+            timestamp_seconds=image.timestamp,
+            image_path=relative_image_path,
+            control={
+                "steer": control.steer,
+                "throttle": control.throttle,
+                "brake": control.brake,
+                "hand_brake": control.hand_brake,
+                "reverse": control.reverse,
             },
-            "ego": {
-                "location": {
-                    "x": float(transform.location.x),
-                    "y": float(transform.location.y),
-                    "z": float(transform.location.z),
-                },
-                "rotation": {
-                    "pitch": float(transform.rotation.pitch),
-                    "yaw": float(transform.rotation.yaw),
-                    "roll": float(transform.rotation.roll),
-                },
-                "velocity": {
-                    "x": float(velocity.x),
-                    "y": float(velocity.y),
-                    "z": float(velocity.z),
-                },
+            location={
+                "x": transform.location.x,
+                "y": transform.location.y,
+                "z": transform.location.z,
             },
-        }
-        with self.metadata_path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(record, sort_keys=True) + "\n")
+            rotation={
+                "pitch": transform.rotation.pitch,
+                "yaw": transform.rotation.yaw,
+                "roll": transform.rotation.roll,
+            },
+            velocity={"x": velocity.x, "y": velocity.y, "z": velocity.z},
+        )
+        self._metadata_writer.append(record)
         self._saved_images += 1
 
     def _next_image(self, world_frame: int, timeout_seconds: float) -> Any:

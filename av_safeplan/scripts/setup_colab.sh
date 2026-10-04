@@ -165,6 +165,8 @@ apt-get install -y -qq \
   libvulkan1 \
   mesa-vulkan-drivers \
   netcat-openbsd \
+  passwd \
+  util-linux \
   vulkan-tools \
   xdg-user-dirs
 

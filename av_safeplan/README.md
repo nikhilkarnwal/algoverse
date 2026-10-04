@@ -19,6 +19,24 @@ This milestone pins the CARLA/SimLingo runtime and provides environment validati
 
 The machine-readable source of truth is [`config/stack.yaml`](config/stack.yaml).
 
+## Local macOS CPU validation
+
+CARLA's packaged simulator supports Windows and Linux, not macOS. Before using Colab, a Mac can still validate the project plumbing with a deterministic synthetic drive. This local path exercises configuration loading, CPU policy output, trajectory image creation, the same metadata schema used by the CARLA recorder, and output integrity checks. It does not claim to validate CARLA physics, the Behavior Agent, or SimLingo inference.
+
+Run:
+
+```bash
+./scripts/run_local_cpu.sh
+```
+
+The first run creates `.venv-local` and installs only PyYAML and Pillow. Choose the trajectory length or output directory as needed:
+
+```bash
+./scripts/run_local_cpu.sh --steps 60 --output-dir outputs/local-validation
+```
+
+A successful run creates `rgb/*.png`, `trajectory.jsonl`, `manifest.json`, and `validation.json` under a timestamped run directory. The command exits nonzero if frame ordering, image decoding, dimensions, or required metadata fields are invalid.
+
 ## Colab Pro setup
 
 Colab's managed runtime uses a newer system Python than SimLingo. Do not install the pinned SimLingo stack into Colab's system interpreter. The Colab setup creates an isolated Python 3.8 environment with micromamba and exposes it through a command wrapper.
@@ -64,6 +82,8 @@ To start CARLA and record a complete Behavior Agent trajectory in one command:
 ```bash
 ./scripts/run_behavior_trajectory_colab.sh --steps 200
 ```
+
+Colab notebook processes run as root, but Unreal Engine refuses to run with root privileges. `start_carla_colab.sh` therefore creates a restricted `carla-runner` account when needed and launches only the CARLA server under that account. The notebook, environment setup, and Python client continue running normally.
 
 Each run creates a separate directory containing ordered RGB images and frame-aligned vehicle state/control metadata:
 

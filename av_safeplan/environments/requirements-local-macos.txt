@@ -1,0 +1,4 @@
+# Minimal dependencies for the synthetic CPU pipeline validator on macOS.
+# CARLA, SimLingo, CUDA, and Flash Attention are intentionally excluded.
+Pillow==10.4.0
+PyYAML==6.0.2

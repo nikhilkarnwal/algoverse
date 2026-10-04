@@ -1,5 +1,6 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+.DS_Store
 *.py[codz]
 *$py.class
 
@@ -211,6 +212,7 @@ tempCodeRunnerFile.py
 
 # AV SafePlan external assets and run outputs
 av_safeplan/.env
+av_safeplan/.venv-local/
 av_safeplan/.external/
 av_safeplan/checkpoints/
 av_safeplan/models/
