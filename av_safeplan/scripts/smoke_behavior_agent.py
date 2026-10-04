@@ -81,6 +81,20 @@ def main() -> int:
             )
         )
 
+    available_maps = client.get_available_maps()
+    expected_suffix = "/{}".format(settings.carla.map_name)
+    if not any(
+        item == settings.carla.map_name or item.endswith(expected_suffix)
+        for item in available_maps
+    ):
+        available_names = sorted(item.rsplit("/", 1)[-1] for item in available_maps)
+        raise RuntimeError(
+            "Map {!r} is not installed. Available maps: {}. "
+            "On Colab run scripts/install_carla_maps_colab.sh first.".format(
+                settings.carla.map_name,
+                ", ".join(available_names) or "none",
+            )
+        )
     world = client.load_world(settings.carla.map_name)
     traffic_manager = client.get_trafficmanager(settings.carla.traffic_manager_port)
     traffic_manager.set_random_device_seed(settings.carla.seed)

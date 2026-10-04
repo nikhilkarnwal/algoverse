@@ -58,7 +58,7 @@ The setup script:
 - Installs the CUDA 12.1 PyTorch 2.2 stack before other dependencies.
 - Builds Flash Attention against that exact stack.
 - Clones SimLingo at the pinned Git revision.
-- Downloads CARLA 0.9.15, which contains the Town12 map used by this project.
+- Downloads CARLA 0.9.15 and imports the Additional Maps package required for Town12.
 - Downloads only the inference checkpoint and Hydra configuration rather than the training optimizer shards.
 - Caches InternVL2-1B.
 - Writes the local `.env` consumed by the project scripts.
@@ -115,11 +115,12 @@ Optional setup controls:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `AV_SAFEPLAN_DOWNLOAD_CARLA` | `1` | Set to `0` when CARLA is already available. |
-| `AV_SAFEPLAN_DOWNLOAD_ADDITIONAL_MAPS` | `0` | Set to `1` only when optional maps outside the base package are needed. |
+| `AV_SAFEPLAN_DOWNLOAD_ADDITIONAL_MAPS` | `1` | Install the map assets required for Town12. |
 | `AV_SAFEPLAN_DOWNLOAD_MODELS` | `1` | Set to `0` when model assets are already available. |
 | `AV_SAFEPLAN_INSTALL_FLASH_ATTN` | `1` | Set to `0` only for environment diagnosis. |
 | `AV_SAFEPLAN_KEEP_DOWNLOAD_ARCHIVES` | `0` | Keep large CARLA archives after successful extraction. |
 | `AV_SAFEPLAN_CARLA_MIN_FREE_GB` | `30` | Minimum free space required before CARLA extraction. |
+| `AV_SAFEPLAN_MAPS_MIN_FREE_GB` | `20` | Minimum free space required before importing Town12 assets. |
 | `AV_SAFEPLAN_COLAB_ROOT` | `/content/av_safeplan` | Runtime environment and cache root. |
 | `AV_SAFEPLAN_EXTERNAL_ROOT` | `/content/av_safeplan/external` | CARLA, SimLingo, and model location. |
 | `AV_SAFEPLAN_OUTPUT_ROOT` | `/content/av_safeplan/outputs/trajectories` | Recorded RGB trajectories and metadata. |
@@ -127,6 +128,13 @@ Optional setup controls:
 Colab hardware and runtime lifetimes are not guaranteed. Save experiment outputs to Drive or another persistent store before the runtime terminates.
 
 If CARLA extraction was interrupted, rerun `./scripts/setup_colab.sh`. The installer now validates or resumes the archive and extracts through a separate staging directory. It will not delete an incomplete directory automatically; inspect and remove or rename the path printed in the error first. Keep extracted runtime files under `/content`; Google Drive is better used for download caches and recorded trajectories.
+
+If CARLA starts but reports that Town12 is unavailable, install only the missing map package—without reinstalling CARLA, Python dependencies, or model weights—then rerun the trajectory command:
+
+```bash
+./scripts/install_carla_maps_colab.sh
+./scripts/run_behavior_trajectory_colab.sh --steps 200
+```
 
 ## Platform expectations
 

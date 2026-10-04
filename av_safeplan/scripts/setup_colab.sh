@@ -21,7 +21,7 @@ HF_HOME="${HF_HOME:-${CACHE_ROOT}/huggingface}"
 OUTPUT_ROOT="${AV_SAFEPLAN_OUTPUT_ROOT:-${COLAB_ROOT}/outputs/trajectories}"
 
 DOWNLOAD_CARLA="${AV_SAFEPLAN_DOWNLOAD_CARLA:-1}"
-DOWNLOAD_ADDITIONAL_MAPS="${AV_SAFEPLAN_DOWNLOAD_ADDITIONAL_MAPS:-0}"
+DOWNLOAD_ADDITIONAL_MAPS="${AV_SAFEPLAN_DOWNLOAD_ADDITIONAL_MAPS:-1}"
 DOWNLOAD_MODELS="${AV_SAFEPLAN_DOWNLOAD_MODELS:-1}"
 INSTALL_FLASH_ATTN="${AV_SAFEPLAN_INSTALL_FLASH_ATTN:-1}"
 KEEP_DOWNLOAD_ARCHIVES="${AV_SAFEPLAN_KEEP_DOWNLOAD_ARCHIVES:-0}"
@@ -31,7 +31,6 @@ MAX_JOBS="${MAX_JOBS:-2}"
 SIMLINGO_REVISION="743b243afd6cf5ff51b9fa1f8cac86f22d569684"
 MODEL_REVISION="26c7c89e797d4e25bbf640013317af8da26a5454"
 CARLA_ARCHIVE_URL="https://carla-releases.s3.us-east-005.backblazeb2.com/Linux/CARLA_0.9.15.tar.gz"
-CARLA_MAPS_URL="https://carla-releases.s3.us-east-005.backblazeb2.com/Linux/AdditionalMaps_0.9.15.tar.gz"
 
 export MAMBA_ROOT_PREFIX HF_HOME MAX_JOBS
 
@@ -228,19 +227,14 @@ if [[ "${DOWNLOAD_CARLA}" == "1" && ! -f "${CARLA_ROOT}/.av-safeplan-install-com
     rm -f -- "${CARLA_ARCHIVE}"
   fi
 
-  if [[ "${DOWNLOAD_ADDITIONAL_MAPS}" == "1" ]]; then
-    echo "Installing optional CARLA additional maps..."
-    CARLA_MAPS_ARCHIVE="${CACHE_ROOT}/carla/AdditionalMaps_0.9.15.tar.gz"
-    download_tar_archive "${CARLA_MAPS_URL}" "${CARLA_MAPS_ARCHIVE}"
-    mkdir -p "${CARLA_ROOT}/Import"
-    cp "${CARLA_MAPS_ARCHIVE}" "${CARLA_ROOT}/Import/"
-    (cd "${CARLA_ROOT}" && bash ImportAssets.sh)
-    if [[ "${KEEP_DOWNLOAD_ARCHIVES}" != "1" ]]; then
-      rm -f -- "${CARLA_MAPS_ARCHIVE}" "${CARLA_ROOT}/Import/AdditionalMaps_0.9.15.tar.gz"
-    fi
-  fi
-
   touch "${CARLA_ROOT}/.av-safeplan-install-complete"
+fi
+
+if [[ "${DOWNLOAD_ADDITIONAL_MAPS}" == "1" ]]; then
+  CARLA_ROOT="${CARLA_ROOT}" \
+  CARLA_PORT="${CARLA_PORT:-2000}" \
+  AV_SAFEPLAN_KEEP_DOWNLOAD_ARCHIVES="${KEEP_DOWNLOAD_ARCHIVES}" \
+    "${PROJECT_ROOT}/scripts/install_carla_maps_colab.sh"
 fi
 
 if [[ "${DOWNLOAD_MODELS}" == "1" ]]; then
