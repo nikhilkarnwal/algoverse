@@ -185,11 +185,16 @@ class RgbTrajectoryRecorder:
         self._next_image(world_frame, timeout_seconds)
 
     def close(self) -> None:
-        if self._sensor is not None:
-            self._sensor.stop()
-            if self._sensor.is_alive:
-                self._sensor.destroy()
-            self._sensor = None
+        sensor = self._sensor
+        self._sensor = None
+        if sensor is None:
+            return
+
+        try:
+            sensor.stop()
+        finally:
+            if sensor.is_alive:
+                sensor.destroy()
 
     def __enter__(self) -> "RgbTrajectoryRecorder":
         self.start()

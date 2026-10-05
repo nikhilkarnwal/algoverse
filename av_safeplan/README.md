@@ -83,6 +83,20 @@ To start CARLA and record a complete Behavior Agent trajectory in one command:
 ./scripts/run_behavior_trajectory_colab.sh --steps 200
 ```
 
+Before attempting Town12, validate the complete CARLA-to-image pipeline with the reduced preset:
+
+```bash
+./scripts/run_small_trajectory_colab.sh
+```
+
+This restarts CARLA cleanly, uses the small built-in Town01 map, runs 50 ticks, records at 640×360, and saves every second frame. Once this succeeds, increase the step count or move back to Town12.
+
+For an even smaller simulator-only check, skip the camera and run 20 ticks:
+
+```bash
+./scripts/run_small_trajectory_colab.sh --no-images --steps 20
+```
+
 Colab notebook processes run as root, but Unreal Engine refuses to run with root privileges. `start_carla_colab.sh` therefore creates a restricted `carla-runner` account when needed and launches only the CARLA server under that account. The notebook, environment setup, and Python client continue running normally.
 
 Server readiness is checked through the CARLA RPC API rather than only by testing whether port 2000 is open. Town12 is a large tiled map, so map loading uses a separate five-minute timeout. Override the defaults with `CARLA_STARTUP_TIMEOUT_SECONDS` and `CARLA_MAP_LOAD_TIMEOUT_SECONDS` if a slower Colab runtime needs more time.

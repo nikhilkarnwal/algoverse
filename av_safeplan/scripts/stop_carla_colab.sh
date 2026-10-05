@@ -12,6 +12,7 @@ fi
 CARLA_PORT="${CARLA_PORT:-2000}"
 CARLA_PID_FILE="${CARLA_PID_FILE:-/content/carla-server.pid}"
 CARLA_RUN_USER="${CARLA_RUN_USER:-carla-runner}"
+CARLA_PID=""
 
 if [[ -f "${CARLA_PID_FILE}" ]]; then
   CARLA_PID="$(tr -cd '0-9' < "${CARLA_PID_FILE}")"
@@ -29,7 +30,7 @@ if [[ "${EUID}" -eq 0 ]] && id "${CARLA_RUN_USER}" >/dev/null 2>&1; then
   fi
 fi
 
-for _ in $(seq 1 20); do
+for _ in $(seq 1 10); do
   if ! nc -z 127.0.0.1 "${CARLA_PORT}" >/dev/null 2>&1; then
     rm -f -- "${CARLA_PID_FILE}"
     echo "CARLA stopped."
@@ -38,5 +39,28 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 
-echo "CARLA is still listening on port ${CARLA_PORT}. Restart the Colab runtime before importing maps." >&2
+echo "CARLA did not stop gracefully; force-stopping the managed server..." >&2
+if [[ -n "${CARLA_PID}" ]] && kill -0 "${CARLA_PID}" >/dev/null 2>&1; then
+  kill -KILL "${CARLA_PID}" >/dev/null 2>&1 || true
+fi
+
+if [[ "${EUID}" -eq 0 ]] && id "${CARLA_RUN_USER}" >/dev/null 2>&1; then
+  mapfile -t CARLA_PIDS < <(
+    pgrep -u "${CARLA_RUN_USER}" -f 'CarlaUE4-Linux-Shipping' 2>/dev/null || true
+  )
+  if [[ "${#CARLA_PIDS[@]}" -gt 0 ]]; then
+    kill -KILL "${CARLA_PIDS[@]}" >/dev/null 2>&1 || true
+  fi
+fi
+
+for _ in $(seq 1 10); do
+  if ! nc -z 127.0.0.1 "${CARLA_PORT}" >/dev/null 2>&1; then
+    rm -f -- "${CARLA_PID_FILE}"
+    echo "CARLA force-stopped."
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Port ${CARLA_PORT} is still in use. Restart the Colab runtime before retrying." >&2
 exit 1

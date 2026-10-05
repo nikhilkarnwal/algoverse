@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Run a deterministic Behavior Agent smoke route in Town12."""
+"""Run a deterministic Behavior Agent route and optionally record RGB frames."""
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 import random
 import sys
@@ -47,6 +48,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config" / "stack.yaml")
     parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument("--map", dest="map_name", default=None, help="Override the configured map")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -63,9 +65,35 @@ def main() -> int:
         action="store_true",
         help="Run the route without attaching the trajectory camera",
     )
+    parser.add_argument("--image-width", type=int, default=None)
+    parser.add_argument("--image-height", type=int, default=None)
+    parser.add_argument("--frame-stride", type=int, default=None)
     arguments = parser.parse_args()
 
     settings = load_stack(arguments.config)
+    target_map = arguments.map_name or settings.carla.map_name
+    recording_settings = replace(
+        settings.recording,
+        image_width=(
+            arguments.image_width
+            if arguments.image_width is not None
+            else settings.recording.image_width
+        ),
+        image_height=(
+            arguments.image_height
+            if arguments.image_height is not None
+            else settings.recording.image_height
+        ),
+        frame_stride=(
+            arguments.frame_stride
+            if arguments.frame_stride is not None
+            else settings.recording.frame_stride
+        ),
+    )
+    if recording_settings.image_width < 1 or recording_settings.image_height < 1:
+        parser.error("image dimensions must be positive")
+    if recording_settings.frame_stride < 1:
+        parser.error("--frame-stride must be at least 1")
     apply_python_paths(settings)
 
     import carla
@@ -82,33 +110,33 @@ def main() -> int:
         )
 
     available_maps = client.get_available_maps()
-    expected_suffix = "/{}".format(settings.carla.map_name)
+    expected_suffix = "/{}".format(target_map)
     if not any(
-        item == settings.carla.map_name or item.endswith(expected_suffix)
+        item == target_map or item.endswith(expected_suffix)
         for item in available_maps
     ):
         available_names = sorted(item.rsplit("/", 1)[-1] for item in available_maps)
         raise RuntimeError(
             "Map {!r} is not installed. Available maps: {}. "
             "On Colab run scripts/install_carla_maps_colab.sh first.".format(
-                settings.carla.map_name,
+                target_map,
                 ", ".join(available_names) or "none",
             )
         )
     current_world = client.get_world()
     current_map_name = current_world.get_map().name.rsplit("/", 1)[-1]
-    if current_map_name == settings.carla.map_name:
-        print("Reusing already loaded map {}.".format(settings.carla.map_name))
+    if current_map_name == target_map:
+        print("Reusing already loaded map {}.".format(target_map))
         world = current_world
     else:
         print(
             "Loading map {} with a {:.0f}-second timeout...".format(
-                settings.carla.map_name,
+                target_map,
                 settings.carla.map_load_timeout_seconds,
             )
         )
         client.set_timeout(settings.carla.map_load_timeout_seconds)
-        world = client.load_world(settings.carla.map_name)
+        world = client.load_world(target_map)
         client.set_timeout(settings.carla.timeout_seconds)
     traffic_manager = client.get_trafficmanager(settings.carla.traffic_manager_port)
     traffic_manager.set_random_device_seed(settings.carla.seed)
@@ -130,14 +158,14 @@ def main() -> int:
                     output_root = PROJECT_ROOT / output_root
                 run_directory = create_run_directory(
                     output_root.resolve(),
-                    settings.carla.map_name,
+                    target_map,
                     settings.carla.seed,
                     arguments.run_name,
                 )
                 recorder = RgbTrajectoryRecorder(
                     world,
                     actor,
-                    settings.recording,
+                    recording_settings,
                     run_directory,
                 )
                 recorder.start()
@@ -167,12 +195,23 @@ def main() -> int:
                     recorder.saved_images, run_directory
                 ))
     finally:
-        try:
-            if recorder is not None:
+        if recorder is not None:
+            try:
                 recorder.close()
-        finally:
-            if actor is not None and actor.is_alive:
-                actor.destroy()
+            except Exception as error:
+                print(
+                    "Warning: could not cleanly destroy RGB sensor: {}".format(error),
+                    file=sys.stderr,
+                )
+        if actor is not None:
+            try:
+                if actor.is_alive:
+                    actor.destroy()
+            except Exception as error:
+                print(
+                    "Warning: could not cleanly destroy ego vehicle: {}".format(error),
+                    file=sys.stderr,
+                )
     return 0
 
 
