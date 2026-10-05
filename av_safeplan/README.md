@@ -85,6 +85,8 @@ To start CARLA and record a complete Behavior Agent trajectory in one command:
 
 Colab notebook processes run as root, but Unreal Engine refuses to run with root privileges. `start_carla_colab.sh` therefore creates a restricted `carla-runner` account when needed and launches only the CARLA server under that account. The notebook, environment setup, and Python client continue running normally.
 
+Server readiness is checked through the CARLA RPC API rather than only by testing whether port 2000 is open. Town12 is a large tiled map, so map loading uses a separate five-minute timeout. Override the defaults with `CARLA_STARTUP_TIMEOUT_SECONDS` and `CARLA_MAP_LOAD_TIMEOUT_SECONDS` if a slower Colab runtime needs more time.
+
 Each run creates a separate directory containing ordered RGB images and frame-aligned vehicle state/control metadata:
 
 ```text

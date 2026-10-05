@@ -23,13 +23,14 @@ if [[ ! -x "${CARLA_BINARY}" ]]; then
   exit 1
 fi
 
-if nc -z 127.0.0.1 "${CARLA_PORT}"; then
-  echo "CARLA is already listening on port ${CARLA_PORT}."
-  exit 0
+SERVER_ALREADY_LISTENING=0
+if nc -z 127.0.0.1 "${CARLA_PORT}" >/dev/null 2>&1; then
+  SERVER_ALREADY_LISTENING=1
+  echo "CARLA is already listening on port ${CARLA_PORT}; checking RPC readiness..."
 fi
 
 LAUNCH_PREFIX=()
-if [[ "${EUID}" -eq 0 ]]; then
+if [[ "${SERVER_ALREADY_LISTENING}" == "0" && "${EUID}" -eq 0 ]]; then
   if ! command -v runuser >/dev/null 2>&1; then
     echo "runuser is unavailable. Rerun scripts/setup_colab.sh to install util-linux." >&2
     exit 1
@@ -67,28 +68,28 @@ if [[ "${EUID}" -eq 0 ]]; then
   )
 fi
 
-echo "Starting CARLA 0.9.15 in off-screen, low-quality mode..."
-(
-  cd "${CARLA_ROOT}"
-  nohup "${LAUNCH_PREFIX[@]}" "${CARLA_BINARY}" CarlaUE4 \
-    -RenderOffScreen \
-    -nosound \
-    -quality-level=Low \
-    -ResX=640 \
-    -ResY=480 \
-    -carla-rpc-port="${CARLA_PORT}" \
-    >"${CARLA_LOG}" 2>&1 &
-  echo $! > "${CARLA_PID_FILE}"
-)
+if [[ "${SERVER_ALREADY_LISTENING}" == "0" ]]; then
+  echo "Starting CARLA 0.9.15 in off-screen, low-quality mode..."
+  (
+    cd "${CARLA_ROOT}"
+    nohup "${LAUNCH_PREFIX[@]}" "${CARLA_BINARY}" CarlaUE4 \
+      -RenderOffScreen \
+      -nosound \
+      -quality-level=Low \
+      -ResX=640 \
+      -ResY=480 \
+      -carla-rpc-port="${CARLA_PORT}" \
+      >"${CARLA_LOG}" 2>&1 &
+    echo $! > "${CARLA_PID_FILE}"
+  )
+fi
 
-for _ in $(seq 1 60); do
-  if nc -z 127.0.0.1 "${CARLA_PORT}"; then
-    echo "CARLA is ready on port ${CARLA_PORT}. Log: ${CARLA_LOG}"
-    exit 0
-  fi
-  sleep 2
-done
+if "${PROJECT_ROOT}/scripts/colab_run.sh" \
+  python "${PROJECT_ROOT}/scripts/wait_for_carla.py"; then
+  echo "CARLA is ready on port ${CARLA_PORT}. Log: ${CARLA_LOG}"
+  exit 0
+fi
 
-echo "CARLA did not become ready. Last log lines:" >&2
+echo "CARLA did not become RPC-ready. Last log lines:" >&2
 tail -n 40 "${CARLA_LOG}" >&2 || true
 exit 1

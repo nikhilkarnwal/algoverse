@@ -6,6 +6,8 @@ carla:
   port: 2000
   traffic_manager_port: 8000
   timeout_seconds: 20.0
+  startup_timeout_seconds: 180.0
+  map_load_timeout_seconds: 300.0
   map: "Town12"
   synchronous: true
   fixed_delta_seconds: 0.05

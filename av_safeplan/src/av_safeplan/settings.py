@@ -15,6 +15,8 @@ class CarlaSettings:
     port: int
     traffic_manager_port: int
     timeout_seconds: float
+    startup_timeout_seconds: float
+    map_load_timeout_seconds: float
     map_name: str
     synchronous: bool
     fixed_delta_seconds: float
@@ -120,6 +122,14 @@ def load_stack(path: Path) -> StackSettings:
     traffic_manager_port = int(os.environ.get(
         "CARLA_TRAFFIC_MANAGER_PORT", _required(carla_data, "traffic_manager_port")
     ))
+    startup_timeout_seconds = float(os.environ.get(
+        "CARLA_STARTUP_TIMEOUT_SECONDS",
+        carla_data.get("startup_timeout_seconds", 180.0),
+    ))
+    map_load_timeout_seconds = float(os.environ.get(
+        "CARLA_MAP_LOAD_TIMEOUT_SECONDS",
+        carla_data.get("map_load_timeout_seconds", 300.0),
+    ))
     checkpoint = CheckpointSettings(
         repository=str(_required(checkpoint_data, "repository")),
         revision=str(_required(checkpoint_data, "revision")),
@@ -138,6 +148,8 @@ def load_stack(path: Path) -> StackSettings:
             port=port,
             traffic_manager_port=traffic_manager_port,
             timeout_seconds=float(_required(carla_data, "timeout_seconds")),
+            startup_timeout_seconds=startup_timeout_seconds,
+            map_load_timeout_seconds=map_load_timeout_seconds,
             map_name=str(_required(carla_data, "map")),
             synchronous=bool(_required(carla_data, "synchronous")),
             fixed_delta_seconds=float(_required(carla_data, "fixed_delta_seconds")),

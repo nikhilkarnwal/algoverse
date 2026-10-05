@@ -95,7 +95,21 @@ def main() -> int:
                 ", ".join(available_names) or "none",
             )
         )
-    world = client.load_world(settings.carla.map_name)
+    current_world = client.get_world()
+    current_map_name = current_world.get_map().name.rsplit("/", 1)[-1]
+    if current_map_name == settings.carla.map_name:
+        print("Reusing already loaded map {}.".format(settings.carla.map_name))
+        world = current_world
+    else:
+        print(
+            "Loading map {} with a {:.0f}-second timeout...".format(
+                settings.carla.map_name,
+                settings.carla.map_load_timeout_seconds,
+            )
+        )
+        client.set_timeout(settings.carla.map_load_timeout_seconds)
+        world = client.load_world(settings.carla.map_name)
+        client.set_timeout(settings.carla.timeout_seconds)
     traffic_manager = client.get_trafficmanager(settings.carla.traffic_manager_port)
     traffic_manager.set_random_device_seed(settings.carla.seed)
     actor = None
