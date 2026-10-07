@@ -4,7 +4,6 @@
 import argparse
 from dataclasses import replace
 from pathlib import Path
-import random
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +11,14 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from av_safeplan.carla.synchronous import SynchronousWorld
 from av_safeplan.carla.recording import RgbTrajectoryRecorder, create_run_directory
+from av_safeplan.carla.determinism import (
+    RoutePlan,
+    apply_deterministic_seeds,
+    build_run_manifest,
+    route_manifest,
+    select_route_plan,
+    write_run_manifest,
+)
 from av_safeplan.environment.checks import apply_python_paths
 from av_safeplan.settings import load_stack
 
@@ -24,24 +31,18 @@ def select_vehicle_blueprint(world):
     return preferred[0] if preferred else sorted(blueprints, key=lambda item: item.id)[0]
 
 
-def spawn_ego(world, seed):
-    points = list(world.get_map().get_spawn_points())
-    if len(points) < 2:
-        raise RuntimeError("Town does not provide enough spawn points")
-    rng = random.Random(seed)
-    ordered = list(points)
-    rng.shuffle(ordered)
+def spawn_ego(world, route: RoutePlan, spawn_points):
     blueprint = select_vehicle_blueprint(world)
     blueprint.set_attribute("role_name", "hero")
-    for point in ordered:
-        actor = world.try_spawn_actor(blueprint, point)
-        if actor is not None:
-            destination = max(
-                points,
-                key=lambda candidate: candidate.location.distance(point.location),
+    actor = world.try_spawn_actor(blueprint, spawn_points[route.spawn_index])
+    if actor is None:
+        raise RuntimeError(
+            "Unable to spawn the ego vehicle at route {}. The deterministic "
+            "spawn point may be occupied; reload the map before replaying.".format(
+                route.route_id
             )
-            return actor, destination.location
-    raise RuntimeError("Unable to spawn the ego vehicle")
+        )
+    return actor, spawn_points[route.destination_index].location
 
 
 def main() -> int:
@@ -49,6 +50,19 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config" / "stack.yaml")
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--map", dest="map_name", default=None, help="Override the configured map")
+    parser.add_argument("--seed", type=int, default=None, help="Override the configured run seed")
+    parser.add_argument(
+        "--spawn-index",
+        type=int,
+        default=None,
+        help="Replay an explicit CARLA spawn-point index",
+    )
+    parser.add_argument(
+        "--destination-index",
+        type=int,
+        default=None,
+        help="Replay an explicit CARLA destination spawn-point index",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -72,6 +86,10 @@ def main() -> int:
 
     settings = load_stack(arguments.config)
     target_map = arguments.map_name or settings.carla.map_name
+    run_seed = arguments.seed if arguments.seed is not None else settings.carla.seed
+    steps = arguments.steps if arguments.steps is not None else settings.smoke.steps
+    if steps < 1:
+        parser.error("--steps must be at least 1")
     recording_settings = replace(
         settings.recording,
         image_width=(
@@ -102,6 +120,7 @@ def main() -> int:
     client = carla.Client(settings.carla.host, settings.carla.port)
     client.set_timeout(settings.carla.timeout_seconds)
     server_version = client.get_server_version()
+    client_version = client.get_client_version()
     if server_version != settings.carla.version:
         raise RuntimeError(
             "CARLA server version {} does not match pinned {}".format(
@@ -139,79 +158,131 @@ def main() -> int:
         world = client.load_world(target_map)
         client.set_timeout(settings.carla.timeout_seconds)
     traffic_manager = client.get_trafficmanager(settings.carla.traffic_manager_port)
-    traffic_manager.set_random_device_seed(settings.carla.seed)
+    apply_deterministic_seeds(world, traffic_manager, run_seed)
+    spawn_points = list(world.get_map().get_spawn_points())
+    route = select_route_plan(
+        target_map,
+        spawn_points,
+        run_seed,
+        spawn_index=arguments.spawn_index,
+        destination_index=arguments.destination_index,
+    )
+
+    output_root = arguments.output_dir or settings.recording.output_root
+    if not output_root.is_absolute():
+        output_root = PROJECT_ROOT / output_root
+    run_directory = create_run_directory(
+        output_root.resolve(),
+        target_map,
+        run_seed,
+        arguments.run_name,
+    )
+    recording_enabled = settings.recording.enabled and not arguments.no_images
+    manifest_path = run_directory / "manifest.json"
+    manifest = build_run_manifest(
+        project=settings.project,
+        seed=run_seed,
+        route=route_manifest(route, spawn_points),
+        fixed_delta_seconds=settings.carla.fixed_delta_seconds,
+        requested_steps=steps,
+        policy="behavior_agent",
+        behavior=settings.smoke.behavior,
+        carla_client_version=client_version,
+        carla_server_version=server_version,
+        recording={
+            "enabled": recording_enabled,
+            "frame_stride": recording_settings.frame_stride,
+            "image_width": recording_settings.image_width,
+            "image_height": recording_settings.image_height,
+        },
+    )
+    write_run_manifest(manifest_path, manifest)
+
     actor = None
     recorder = None
-    run_directory = None
-    steps = arguments.steps or settings.smoke.steps
+    executed = 0
+    destination_reached = False
 
     try:
         with SynchronousWorld(world, traffic_manager, settings.carla.fixed_delta_seconds):
-            actor, destination = spawn_ego(world, settings.carla.seed)
-            agent = BehaviorAgent(actor, behavior=settings.smoke.behavior)
-            agent.set_destination(destination)
+            try:
+                actor, destination = spawn_ego(world, route, spawn_points)
+                agent = BehaviorAgent(actor, behavior=settings.smoke.behavior)
+                agent.set_destination(destination)
 
-            recording_enabled = settings.recording.enabled and not arguments.no_images
-            if recording_enabled:
-                output_root = arguments.output_dir or settings.recording.output_root
-                if not output_root.is_absolute():
-                    output_root = PROJECT_ROOT / output_root
-                run_directory = create_run_directory(
-                    output_root.resolve(),
-                    target_map,
-                    settings.carla.seed,
-                    arguments.run_name,
-                )
-                recorder = RgbTrajectoryRecorder(
-                    world,
-                    actor,
-                    recording_settings,
-                    run_directory,
-                )
-                recorder.start()
-
-            executed = 0
-            for _ in range(steps):
-                world_frame = world.tick()
-                control = agent.run_step()
-                if not isinstance(control, carla.VehicleControl):
-                    raise TypeError("Behavior Agent returned an invalid control object")
-                actor.apply_control(control)
-                if recorder is not None:
-                    recorder.save_frame(
-                        world_frame,
-                        control,
-                        timeout_seconds=settings.carla.timeout_seconds,
+                if recording_enabled:
+                    recorder = RgbTrajectoryRecorder(
+                        world,
+                        actor,
+                        recording_settings,
+                        run_directory,
                     )
-                executed += 1
-                if agent.done():
-                    break
+                    recorder.start()
 
-            print("Behavior Agent smoke run passed: {} ticks, destination_reached={}".format(
-                executed, agent.done()
-            ))
-            if recorder is not None:
-                print("Saved {} trajectory images to {}".format(
-                    recorder.saved_images, run_directory
-                ))
-    finally:
-        if recorder is not None:
-            try:
-                recorder.close()
-            except Exception as error:
-                print(
-                    "Warning: could not cleanly destroy RGB sensor: {}".format(error),
-                    file=sys.stderr,
-                )
-        if actor is not None:
-            try:
-                if actor.is_alive:
-                    actor.destroy()
-            except Exception as error:
-                print(
-                    "Warning: could not cleanly destroy ego vehicle: {}".format(error),
-                    file=sys.stderr,
-                )
+                for _ in range(steps):
+                    world_frame = world.tick()
+                    control = agent.run_step()
+                    if not isinstance(control, carla.VehicleControl):
+                        raise TypeError("Behavior Agent returned an invalid control object")
+                    actor.apply_control(control)
+                    if recorder is not None:
+                        recorder.save_frame(
+                            world_frame,
+                            control,
+                            timeout_seconds=settings.carla.timeout_seconds,
+                        )
+                    executed += 1
+                    if agent.done():
+                        break
+                destination_reached = agent.done()
+            finally:
+                if recorder is not None:
+                    try:
+                        recorder.close()
+                    except Exception as error:
+                        print(
+                            "Warning: could not cleanly destroy RGB sensor: {}".format(error),
+                            file=sys.stderr,
+                        )
+                if actor is not None:
+                    try:
+                        if actor.is_alive:
+                            actor.destroy()
+                    except Exception as error:
+                        print(
+                            "Warning: could not cleanly destroy ego vehicle: {}".format(error),
+                            file=sys.stderr,
+                        )
+    except Exception as error:
+        manifest["outcome"] = {
+            "status": "failed",
+            "executed_steps": executed,
+            "destination_reached": destination_reached,
+            "error_type": type(error).__name__,
+            "error": str(error),
+        }
+        write_run_manifest(manifest_path, manifest)
+        raise
+
+    manifest["outcome"] = {
+        "status": "passed",
+        "executed_steps": executed,
+        "destination_reached": destination_reached,
+    }
+    write_run_manifest(manifest_path, manifest)
+    print(
+        "Behavior Agent smoke run passed: {} ticks, destination_reached={}".format(
+            executed,
+            destination_reached,
+        )
+    )
+    print("Route: {}".format(route.route_id))
+    print("Run manifest: {}".format(manifest_path))
+    if recorder is not None:
+        print("Saved {} trajectory images to {}".format(
+            recorder.saved_images,
+            run_directory,
+        ))
     return 0
 
 

@@ -110,7 +110,34 @@ Each run creates a separate directory containing ordered RGB images and frame-al
       frame_000123.png
       frame_000124.png
     trajectory.jsonl
+    manifest.json
 ```
+
+The manifest records the seed, stable route ID, spawn and destination indices, endpoint transforms, fixed simulation step, policy settings, CARLA versions, recording configuration, and final outcome. A seeded route can be replayed directly from its manifest values:
+
+```bash
+./scripts/run_behavior_trajectory_colab.sh \
+  --seed 2026 \
+  --spawn-index 12 \
+  --destination-index 87 \
+  --run-name replay-a
+
+./scripts/run_behavior_trajectory_colab.sh \
+  --seed 2026 \
+  --spawn-index 12 \
+  --destination-index 87 \
+  --run-name replay-b
+```
+
+Compare the two recorded trajectories for pose, velocity, and control drift:
+
+```bash
+./scripts/colab_run.sh python scripts/compare_replays.py \
+  /content/av_safeplan/outputs/trajectories/replay-a \
+  /content/av_safeplan/outputs/trajectories/replay-b
+```
+
+When the endpoint indices are omitted, the seed selects a stable spawn point and a deterministic farthest destination. The selected route ID and endpoint indices are printed and saved in `manifest.json`, so subsequent runs can make the route explicit.
 
 Colab's local filesystem disappears with the runtime. To keep recordings, mount Google Drive and set the output root before running setup (or edit the generated `.env`):
 

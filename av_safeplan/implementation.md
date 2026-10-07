@@ -4,6 +4,8 @@
 
 - Pin the CARLA version and dependency stack required for the selected SimLingo checkpoint; verify Behavior Agent in the same environment where feasible.
 - Bring up Town12 in synchronous mode with a fixed simulation step and deterministic seed handling.
+  - Implementation includes stable route IDs, explicit spawn/destination replay, CARLA and Traffic Manager seeding, per-run manifests, and a trajectory replay comparator.
+  - Completion gate: run the same Town12 route twice in the target Colab runtime and confirm drift remains within the configured replay tolerances.
 - Implement a common base-policy interface: observation → steering, throttle, and brake.
 - Integrate Behavior Agent and validate reproducible closed-loop routes.
 - Integrate the frozen SimLingo driving policy behind the same policy/control interface.
