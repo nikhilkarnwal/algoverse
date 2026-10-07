@@ -19,8 +19,14 @@ from av_safeplan.carla.determinism import (
     select_route_plan,
     write_run_manifest,
 )
+from av_safeplan.carla.observations import collect_observation
 from av_safeplan.environment.checks import apply_python_paths
+from av_safeplan.policies.behavior import BehaviorAgentPolicy
+from av_safeplan.safety.events import SafetyEventMonitor
+from av_safeplan.safety.supervisor import PassthroughSupervisor
+from av_safeplan.scenarios.catalog import ScenarioCatalog, ScenarioRuntime
 from av_safeplan.settings import load_stack
+from av_safeplan.telemetry.episode import EpisodeLogger
 
 
 def select_vehicle_blueprint(world):
@@ -82,6 +88,17 @@ def main() -> int:
     parser.add_argument("--image-width", type=int, default=None)
     parser.add_argument("--image-height", type=int, default=None)
     parser.add_argument("--frame-stride", type=int, default=None)
+    parser.add_argument(
+        "--scenario",
+        default=None,
+        help="Controlled scenario name from the scenario catalog",
+    )
+    parser.add_argument(
+        "--scenario-config",
+        type=Path,
+        default=PROJECT_ROOT / "config" / "scenarios.yaml",
+    )
+    parser.add_argument("--observation-radius", type=float, default=50.0)
     arguments = parser.parse_args()
 
     settings = load_stack(arguments.config)
@@ -90,6 +107,8 @@ def main() -> int:
     steps = arguments.steps if arguments.steps is not None else settings.smoke.steps
     if steps < 1:
         parser.error("--steps must be at least 1")
+    if arguments.observation_radius <= 0:
+        parser.error("--observation-radius must be positive")
     recording_settings = replace(
         settings.recording,
         image_width=(
@@ -115,7 +134,6 @@ def main() -> int:
     apply_python_paths(settings)
 
     import carla
-    from agents.navigation.behavior_agent import BehaviorAgent
 
     client = carla.Client(settings.carla.host, settings.carla.port)
     client.set_timeout(settings.carla.timeout_seconds)
@@ -167,6 +185,12 @@ def main() -> int:
         spawn_index=arguments.spawn_index,
         destination_index=arguments.destination_index,
     )
+    route_data = route_manifest(route, spawn_points)
+    scenario_spec = None
+    if arguments.scenario:
+        scenario_spec = ScenarioCatalog.load(arguments.scenario_config).get(
+            arguments.scenario
+        )
 
     output_root = arguments.output_dir or settings.recording.output_root
     if not output_root.is_absolute():
@@ -182,7 +206,7 @@ def main() -> int:
     manifest = build_run_manifest(
         project=settings.project,
         seed=run_seed,
-        route=route_manifest(route, spawn_points),
+        route=route_data,
         fixed_delta_seconds=settings.carla.fixed_delta_seconds,
         requested_steps=steps,
         policy="behavior_agent",
@@ -196,19 +220,47 @@ def main() -> int:
             "image_height": recording_settings.image_height,
         },
     )
+    manifest["scenario"] = scenario_spec.to_dict() if scenario_spec else None
     write_run_manifest(manifest_path, manifest)
 
     actor = None
     recorder = None
+    policy = None
+    event_monitor = None
+    scenario_runtime = None
+    episode_logger = None
+    supervisor = PassthroughSupervisor()
     executed = 0
     destination_reached = False
+    event_counts = {}
 
     try:
         with SynchronousWorld(world, traffic_manager, settings.carla.fixed_delta_seconds):
             try:
                 actor, destination = spawn_ego(world, route, spawn_points)
-                agent = BehaviorAgent(actor, behavior=settings.smoke.behavior)
-                agent.set_destination(destination)
+                policy = BehaviorAgentPolicy(
+                    actor,
+                    destination,
+                    behavior=settings.smoke.behavior,
+                    target_speed_mps=(
+                        scenario_spec.parameters.get("approach_speed_mps")
+                        if scenario_spec is not None
+                        else None
+                    ),
+                )
+                episode_logger = EpisodeLogger(
+                    run_directory / "episode.jsonl",
+                    seed=run_seed,
+                    route=route_data,
+                    policy_name=policy.name,
+                    scenario=scenario_spec.to_dict() if scenario_spec else None,
+                )
+                event_monitor = SafetyEventMonitor(world, actor)
+                event_monitor.start()
+
+                if scenario_spec is not None:
+                    scenario_runtime = ScenarioRuntime(world, actor, scenario_spec)
+                    scenario_runtime.start()
 
                 if recording_enabled:
                     recorder = RgbTrajectoryRecorder(
@@ -220,28 +272,78 @@ def main() -> int:
                     recorder.start()
 
                 for _ in range(steps):
+                    if scenario_runtime is not None:
+                        scenario_runtime.update(executed)
                     world_frame = world.tick()
-                    control = agent.run_step()
-                    if not isinstance(control, carla.VehicleControl):
-                        raise TypeError("Behavior Agent returned an invalid control object")
-                    actor.apply_control(control)
+                    snapshot = world.get_snapshot()
+                    observation = collect_observation(
+                        world,
+                        actor,
+                        world_frame,
+                        snapshot.timestamp.elapsed_seconds,
+                        destination=destination,
+                        radius_m=arguments.observation_radius,
+                        route_id=route.route_id,
+                    )
+                    base_action = policy.act(observation)
+                    decision = supervisor.supervise(observation, base_action, {})
+                    actor.apply_control(decision.action.to_carla())
+                    events = event_monitor.update(observation)
+                    for event in events:
+                        event_type = event["event_type"]
+                        event_counts[event_type] = event_counts.get(event_type, 0) + 1
+                    episode_logger.append(
+                        observation,
+                        base_action,
+                        decision.action,
+                        events,
+                        supervisor_intervened=decision.intervened,
+                    )
                     if recorder is not None:
                         recorder.save_frame(
                             world_frame,
-                            control,
+                            decision.action,
                             timeout_seconds=settings.carla.timeout_seconds,
                         )
                     executed += 1
-                    if agent.done():
+                    if policy.done():
                         break
-                destination_reached = agent.done()
+                destination_reached = policy.done()
             finally:
+                if event_monitor is not None:
+                    try:
+                        event_monitor.close()
+                    except Exception as error:
+                        print(
+                            "Warning: could not cleanly destroy safety sensors: {}".format(
+                                error
+                            ),
+                            file=sys.stderr,
+                        )
                 if recorder is not None:
                     try:
                         recorder.close()
                     except Exception as error:
                         print(
                             "Warning: could not cleanly destroy RGB sensor: {}".format(error),
+                            file=sys.stderr,
+                        )
+                if scenario_runtime is not None:
+                    try:
+                        scenario_runtime.close()
+                    except Exception as error:
+                        print(
+                            "Warning: could not cleanly destroy scenario actors: {}".format(
+                                error
+                            ),
+                            file=sys.stderr,
+                        )
+                if policy is not None:
+                    try:
+                        policy.close()
+                    except Exception as error:
+                        print(
+                            "Warning: could not cleanly close policy: {}".format(error),
                             file=sys.stderr,
                         )
                 if actor is not None:
@@ -258,6 +360,10 @@ def main() -> int:
             "status": "failed",
             "executed_steps": executed,
             "destination_reached": destination_reached,
+            "event_counts": event_counts,
+            "telemetry_records": (
+                episode_logger.records_written if episode_logger is not None else 0
+            ),
             "error_type": type(error).__name__,
             "error": str(error),
         }
@@ -268,6 +374,10 @@ def main() -> int:
         "status": "passed",
         "executed_steps": executed,
         "destination_reached": destination_reached,
+        "event_counts": event_counts,
+        "telemetry_records": (
+            episode_logger.records_written if episode_logger is not None else 0
+        ),
     }
     write_run_manifest(manifest_path, manifest)
     print(
@@ -278,6 +388,8 @@ def main() -> int:
     )
     print("Route: {}".format(route.route_id))
     print("Run manifest: {}".format(manifest_path))
+    if episode_logger is not None:
+        print("Episode telemetry: {}".format(episode_logger.path))
     if recorder is not None:
         print("Saved {} trajectory images to {}".format(
             recorder.saved_images,

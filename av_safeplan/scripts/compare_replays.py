@@ -88,6 +88,7 @@ def comparable_configuration(manifest: Mapping[str, Any]) -> Dict[str, Any]:
         "policy": manifest.get("policy"),
         "carla": manifest.get("carla"),
         "recording": manifest.get("recording"),
+        "scenario": manifest.get("scenario"),
     }
 
 

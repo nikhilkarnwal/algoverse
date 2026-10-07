@@ -1,0 +1,72 @@
+scenarios:
+  lead_brake_default:
+    family: lead_vehicle_sudden_braking
+    hazard: collision
+    parameters:
+      longitudinal_m: 20.0
+      lateral_m: 0.0
+      initial_throttle: 0.30
+      trigger_step: 35
+
+  cross_traffic_default:
+    family: cross_traffic_conflict
+    hazard: collision
+    parameters:
+      longitudinal_m: 22.0
+      lateral_m: -12.0
+      yaw_offset_degrees: 90.0
+      initial_throttle: 0.45
+      trigger_step: 0
+
+  cut_in_default:
+    family: cut_in_lane_intrusion
+    hazard: collision
+    parameters:
+      longitudinal_m: 16.0
+      lateral_m: 3.5
+      initial_throttle: 0.35
+      trigger_step: 25
+      trigger_throttle: 0.30
+      trigger_steer: -0.40
+
+  late_emergence_default:
+    family: occluded_late_emergence
+    hazard: collision
+    parameters:
+      longitudinal_m: 18.0
+      lateral_m: -8.0
+      yaw_offset_degrees: 90.0
+      initial_throttle: 0.55
+      trigger_step: 30
+
+  red_light_straight_default:
+    family: red_light_straight_approach
+    hazard: red_light
+    parameters:
+      approach_speed_mps: 8.0
+      lead_vehicle: false
+
+  red_light_straight_with_lead:
+    family: red_light_straight_approach
+    hazard: red_light
+    parameters:
+      approach_speed_mps: 8.0
+      lead_vehicle: true
+      longitudinal_m: 18.0
+      lateral_m: 0.0
+      initial_throttle: 0.20
+
+  red_light_straight_fast:
+    family: red_light_straight_approach
+    hazard: red_light
+    parameters:
+      approach_speed_mps: 12.0
+      lead_vehicle: false
+
+  red_light_transition_default:
+    family: red_light_transition
+    hazard: red_light
+    parameters:
+      approach_speed_mps: 10.0
+      transition_step: 20
+      lead_vehicle: false

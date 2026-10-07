@@ -2,7 +2,7 @@
 
 Modular infrastructure for studying calibrated multi-hazard safety supervision in CARLA.
 
-This milestone pins the CARLA/SimLingo runtime and provides environment validation plus a Behavior Agent smoke route. CARLA, SimLingo, and model weights remain external to this repository.
+This milestone provides the pinned CARLA/SimLingo runtime, a common policy interface, deterministic route replay, Behavior Agent and frozen SimLingo adapters, structured episode telemetry, safety-event labels, controlled scenario families, and manual-audit tooling. CARLA, SimLingo, and model weights remain external to this repository.
 
 ## Pinned stack
 
@@ -263,6 +263,44 @@ python scripts/smoke_behavior_agent.py --steps 50
 
 Choose an output directory or a stable run name with `--output-dir` and `--run-name`. Use `--no-images` for a route-only diagnostic. Camera resolution, pose, field of view, and frame stride are configured under `recording` in `config/stack.yaml`.
 
+The runner uses the common `BasePolicy` observation-to-control interface through `BehaviorAgentPolicy`. Every tick also writes `episode.jsonl` with ego state, nearby actors, traffic lights, route state, the base-policy and safety-supervisor actions, safety events, and run context.
+
+## 7. Run controlled safety scenarios
+
+The deterministic scenario catalog is stored in `config/scenarios.yaml`. It contains lead-vehicle braking, cross-traffic, cut-in, late-emergence, fixed-red approaches, and green-to-red transition families. Run one through the same policy, logging, and event-label pipeline:
+
+```bash
+python scripts/smoke_behavior_agent.py \
+  --scenario lead_brake_default \
+  --steps 120
+```
+
+Use a different route with `--spawn-index` and `--destination-index` to cover intersection-geometry variations. Scenario parameters and the resolved route are saved in the run manifest.
+
+Collision events come from CARLA's collision sensor. Red-light labels track entry and exit while the signal remains red. Low time-to-collision encounters and moving entries into a red-light trigger are retained as near-miss audit candidates.
+
+Build a deterministic manual-review queue across saved runs:
+
+```bash
+python scripts/audit_episodes.py \
+  /content/av_safeplan/outputs/trajectories \
+  --output /content/av_safeplan/outputs/audit_queue.jsonl
+```
+
+The queue contains positive, near-miss, and sampled negative windows plus empty reviewer fields. A person must still inspect those windows and complete the audit fields before the label checkpoint is accepted.
+
+## 8. Run frozen SimLingo
+
+`SimLingoPolicy` wraps the pinned upstream `LingoAgent` behind the same `BasePolicy` action contract while preserving its official Leaderboard sensor dictionary and global-plan inputs. For full closed-loop execution, use the upstream Leaderboard evaluator wrapper with a route XML file:
+
+```bash
+./scripts/colab_run.sh python scripts/run_simlingo_leaderboard.py \
+  --routes /path/to/routes.xml \
+  --output-dir /content/av_safeplan/outputs/simlingo-eval
+```
+
+The adapter loads the frozen checkpoint configured by `SIMLINGO_CHECKPOINT`; training and gradient computation are not part of this pipeline.
+
 ## Design boundaries
 
 - Versions and upstream revisions live in one manifest.
@@ -270,5 +308,3 @@ Choose an output directory or a stable run name with `--output-dir` and `--run-n
 - Heavy framework imports occur only inside verification or execution functions.
 - CARLA synchronous state is restored on exit.
 - Weights, CARLA distributions, logs, and generated datasets stay outside Git.
-
-The common Behavior Agent/SimLingo policy interface belongs to the next implementation task.
