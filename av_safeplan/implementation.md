@@ -48,4 +48,12 @@
 
 Both policy adapters should run through the common interface, Town12 scenarios should be replayable, and collision/red-light labels should pass manual audit.
 
+The EC2 completion workflow is implemented by
+`scripts/run_week1_behavior_validation_ec2.sh`. It records two matched Town12
+replays, executes a reduced collision/red-light scenario matrix, generates the
+manual-review queue, and produces `week1_status.json` through
+`scripts/check_week1_completion.py`. The report remains `pending` until the
+human label audit and frozen SimLingo closed-loop result are present; code
+availability alone does not satisfy those two gates.
+
 If SimLingo is not stable enough for large runs, use Behavior Agent for pipeline debugging while SimLingo integration continues in parallel. Keep the central scientific comparison unchanged.

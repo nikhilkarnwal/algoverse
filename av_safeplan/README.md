@@ -82,6 +82,99 @@ running several commands in one paid session, and stop it afterward with:
 Town12 and SimLingo are separate setup phases and should only be installed after
 the Town01 pipeline succeeds.
 
+### Run the Week 1 validation on EC2
+
+Pull the latest project code, then build a reusable CARLA image containing
+Town12. The map archive is downloaded with resume support, validated, imported
+without overwriting overlapping base files, and removed after the image is
+created. The resulting Docker image remains cached on the instance's EBS volume.
+
+```bash
+cd ~/projects/algoverse
+git pull
+cd av_safeplan
+chmod +x scripts/*.sh
+./scripts/install_town12_ec2_docker.sh
+```
+
+Run the Behavior Agent portion of all Week 1 gates with one command:
+
+```bash
+./scripts/run_week1_behavior_validation_ec2.sh
+```
+
+That command starts CARLA once, verifies Town12, records two matched replays,
+compares their drift, runs a reduced collision/red-light scenario matrix, saves
+trajectory images, builds `audit_queue.jsonl`, and writes `week1_status.json`.
+Outputs are placed in a timestamped directory such as:
+
+```text
+~/av-safeplan-runtime/outputs/trajectories/week1-validation-20261018T230000Z/
+```
+
+The default workload is deliberately bounded. For a quick diagnostic before a
+full run, reduce it further:
+
+```bash
+WEEK1_REPLAY_STEPS=50 WEEK1_SCENARIO_STEPS=50 \
+  ./scripts/run_week1_behavior_validation_ec2.sh
+```
+
+Do not treat that shortened diagnostic as the Week 1 evidence run. The normal
+defaults are 200 ticks per replay and 150 ticks per controlled scenario.
+
+The generated status report can pass the automated Behavior Agent gates, but
+Week 1 remains pending until a person reviews at least one positive, near-miss,
+and negative item in `audit_queue.jsonl`, and the frozen SimLingo closed-loop
+run completes. For each inspected audit item, set `reviewed` and
+`label_correct` to `true` and add a short note. Then refresh the report:
+
+```bash
+SESSION=~/av-safeplan-runtime/outputs/trajectories/week1-validation-YYYYMMDDTHHMMSSZ
+./scripts/ec2_run.sh python scripts/check_week1_completion.py "$SESSION" --allow-pending
+```
+
+After the SimLingo environment, checkpoint, and route file are available, save
+its Leaderboard result inside the same session and include it in the final
+check:
+
+```bash
+./scripts/ec2_run.sh python scripts/run_simlingo_leaderboard.py \
+  --routes /path/to/routes.xml \
+  --output-dir "$SESSION/simlingo"
+
+./scripts/ec2_run.sh python scripts/check_week1_completion.py \
+  "$SESSION" \
+  --simlingo-results "$SESSION/simlingo/simulation_results.json"
+```
+
+The lightweight Behavior Agent environment does not install the multi-gigabyte
+SimLingo model stack. Install and run that only when you are ready for its
+completion gate, so paid GPU time and disk usage are not consumed prematurely.
+
+### Copy trajectory images to your Mac
+
+Run the following on the Mac, not in the EC2 SSH shell. Replace the key path and
+EC2 public DNS name. This copies only PNG images while preserving each run's
+directory structure and resumes partial transfers:
+
+```bash
+mkdir -p ~/Desktop/av-safeplan-images
+rsync -avz --progress \
+  --include='*/' --include='*.png' --exclude='*' \
+  -e "ssh -i ~/Downloads/av-safeplan-usw2-key.pem" \
+  ubuntu@YOUR_EC2_PUBLIC_DNS:/home/ubuntu/av-safeplan-runtime/outputs/trajectories/ \
+  ~/Desktop/av-safeplan-images/
+```
+
+To copy manifests, telemetry, audit files, and images together, remove the three
+`--include`/`--exclude` options and choose a different local destination. Stop
+the CARLA container and EC2 instance after copying the evidence:
+
+```bash
+./scripts/stop_carla_ec2_docker.sh
+```
+
 First select a GPU runtime in Colab, clone this repository, and run:
 
 ```bash
