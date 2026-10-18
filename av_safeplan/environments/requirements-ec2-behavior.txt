@@ -1,0 +1,9 @@
+# Minimal host-side dependencies for the EC2 Docker CARLA validation path.
+# SimLingo, PyTorch, model weights, and Flash Attention are intentionally
+# deferred until the Behavior Agent pipeline is proven.
+carla==0.9.15
+networkx==2.8.8
+numpy==1.23.0
+pillow==10.2.0
+pyyaml==6.0.1
+shapely==1.7.1

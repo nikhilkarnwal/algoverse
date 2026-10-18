@@ -212,6 +212,7 @@ tempCodeRunnerFile.py
 
 # AV SafePlan external assets and run outputs
 av_safeplan/.env
+av_safeplan/.env.ec2
 av_safeplan/.venv-local/
 av_safeplan/.external/
 av_safeplan/checkpoints/

@@ -41,6 +41,47 @@ A successful run creates `rgb/*.png`, `trajectory.jsonl`, `manifest.json`, and `
 
 Colab's managed runtime uses a newer system Python than SimLingo. Do not install the pinned SimLingo stack into Colab's system interpreter. The Colab setup creates an isolated Python 3.8 environment with micromamba and exposes it through a command wrapper.
 
+## AWS EC2 Docker setup
+
+The EC2 path runs the CARLA 0.9.15 server in its official GPU Docker image and
+runs the project client in an isolated Python 3.8 environment on the host. This
+keeps the simulator independent of the host Ubuntu release. Runtime assets and
+trajectory outputs default to `~/av-safeplan-runtime`, which must be located on
+the persistent EBS-backed home filesystem rather than instance-store NVMe.
+
+The first phase intentionally installs only the Behavior Agent dependencies. It
+does not download Town12, SimLingo weights, PyTorch, or Flash Attention.
+
+```bash
+cd ~/projects/algoverse/av_safeplan
+chmod +x scripts/*.sh
+./scripts/setup_ec2_docker.sh
+```
+
+Validate CARLA RPC and synchronous simulation without a camera first:
+
+```bash
+./scripts/run_small_trajectory_ec2.sh --no-images --steps 20
+```
+
+Then record the small Town01 trajectory:
+
+```bash
+./scripts/run_small_trajectory_ec2.sh
+```
+
+Each command stops and removes the CARLA container on exit, including most
+failure paths. The Docker image and host environment remain cached on EBS for
+the next EC2 start. Set `AV_SAFEPLAN_KEEP_CARLA_RUNNING=1` only when deliberately
+running several commands in one paid session, and stop it afterward with:
+
+```bash
+./scripts/stop_carla_ec2_docker.sh
+```
+
+Town12 and SimLingo are separate setup phases and should only be installed after
+the Town01 pipeline succeeds.
+
 First select a GPU runtime in Colab, clone this repository, and run:
 
 ```bash
