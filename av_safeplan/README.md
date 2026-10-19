@@ -79,6 +79,13 @@ running several commands in one paid session, and stop it afterward with:
 ./scripts/stop_carla_ec2_docker.sh
 ```
 
+If CARLA exits before RPC becomes ready, the stopped container is intentionally
+retained long enough for the startup script to print the actual error. Inspect
+it directly with `docker logs av-safeplan-carla` and
+`docker inspect av-safeplan-carla`, then remove it with the stop script before
+retrying. The launcher explicitly restores the non-root `carla` user and CARLA
+entrypoint, including for locally derived Town12 images.
+
 Town12 and SimLingo are separate setup phases and should only be installed after
 the Town01 pipeline succeeds.
 

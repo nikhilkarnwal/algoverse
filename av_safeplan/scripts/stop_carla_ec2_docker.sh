@@ -18,5 +18,7 @@ fi
 echo "Stopping CARLA container ${CARLA_DOCKER_NAME}..."
 if ! docker_command stop --time 20 "${CARLA_DOCKER_NAME}" >/dev/null; then
   docker_command rm --force "${CARLA_DOCKER_NAME}" >/dev/null
+else
+  docker_command rm "${CARLA_DOCKER_NAME}" >/dev/null
 fi
-echo "CARLA container stopped."
+echo "CARLA container stopped and removed."

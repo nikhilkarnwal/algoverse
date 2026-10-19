@@ -26,14 +26,15 @@ else
   echo "Starting CARLA 0.9.15 in a GPU-enabled off-screen container..."
   docker_command run \
     --detach \
-    --rm \
     --name "${CARLA_DOCKER_NAME}" \
+    --user "${AV_SAFEPLAN_CARLA_RUNTIME_USER:-carla}" \
+    --entrypoint /bin/bash \
     --privileged \
     --gpus all \
     --network host \
     --volume /tmp/.X11-unix:/tmp/.X11-unix:rw \
     "${CARLA_DOCKER_IMAGE}" \
-    /bin/bash ./CarlaUE4.sh \
+    ./CarlaUE4.sh \
     -RenderOffScreen \
     -nosound \
     -quality-level=Low \
@@ -41,6 +42,19 @@ else
     -ResY=360 \
     -carla-rpc-port="${CARLA_PORT}" \
     >/dev/null
+
+  # Catch configuration and GPU startup failures immediately. Keep the stopped
+  # container so its real error remains available through `docker logs`.
+  sleep 3
+  if [[ "$(docker_command inspect --format '{{.State.Running}}' "${CARLA_DOCKER_NAME}")" != "true" ]]; then
+    echo "CARLA exited during startup. Container logs:" >&2
+    docker_command logs --tail 120 "${CARLA_DOCKER_NAME}" >&2 || true
+    echo "Container state:" >&2
+    docker_command inspect \
+      --format 'status={{.State.Status}} exit_code={{.State.ExitCode}} error={{.State.Error}}' \
+      "${CARLA_DOCKER_NAME}" >&2 || true
+    exit 1
+  fi
 fi
 
 if "${PROJECT_ROOT}/scripts/ec2_run.sh" \

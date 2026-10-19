@@ -45,7 +45,8 @@ set_ec2_image() {
   mv "${temporary_file}" "${EC2_ENV_FILE}"
 }
 
-if docker_command image inspect "${TOWN12_IMAGE}" >/dev/null 2>&1; then
+if docker_command image inspect "${TOWN12_IMAGE}" >/dev/null 2>&1 \
+  && [[ "$(docker_command image inspect --format '{{ index .Config.Labels "org.av-safeplan.maps" }}' "${TOWN12_IMAGE}")" == "Town12" ]]; then
   echo "Town12 Docker image already exists: ${TOWN12_IMAGE}"
   set_ec2_image
   echo "Configured ${EC2_ENV_FILE} to use it."
@@ -82,11 +83,9 @@ cleanup
 docker_command run \
   --detach \
   --name "${BUILDER_NAME}" \
-  --user 0 \
-  --entrypoint /bin/bash \
   --volume "${MAPS_ARCHIVE}:/tmp/AdditionalMaps_0.9.15.tar.gz:ro" \
   "${BASE_IMAGE}" \
-  -lc 'sleep infinity' \
+  /bin/bash -lc 'sleep infinity' \
   >/dev/null
 
 # Additional Maps overlaps a few base-package files. Preserve the base copies
@@ -104,6 +103,8 @@ if ! docker_command exec "${BUILDER_NAME}" \
 fi
 
 docker_command commit \
+  --change 'USER carla' \
+  --change 'WORKDIR /home/carla' \
   --change 'LABEL org.av-safeplan.carla-version="0.9.15"' \
   --change 'LABEL org.av-safeplan.maps="Town12"' \
   "${BUILDER_NAME}" \
