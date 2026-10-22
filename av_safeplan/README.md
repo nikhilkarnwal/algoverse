@@ -111,8 +111,9 @@ Run the Behavior Agent portion of all Week 1 gates with one command:
 ```
 
 That command starts CARLA once, verifies Town12, records two matched replays,
-compares their drift, runs a reduced collision/red-light scenario matrix, saves
-trajectory images, builds `audit_queue.jsonl`, and writes `week1_status.json`.
+compares their drift, runs the original diagnostic collision/red-light matrix,
+saves trajectory images, builds `audit_queue.jsonl`, and writes
+`week1_status.json`.
 Matched replays reload Town12 before actor creation and hold the ego vehicle at
 brake for ten synchronous settling ticks before the Behavior Agent and recorder
 start. Replay output includes per-axis maximum, mean, and 95th-percentile drift.
@@ -135,10 +136,62 @@ WEEK1_REPLAY_STEPS=50 WEEK1_SCENARIO_STEPS=50 \
 Do not treat that shortened diagnostic as the Week 1 evidence run. The normal
 defaults are 200 ticks per replay and 150 ticks per controlled scenario.
 
-The generated status report can pass the automated Behavior Agent gates, but
-Week 1 remains pending until a person reviews at least one positive, near-miss,
-and negative item in `audit_queue.jsonl`, and the frozen SimLingo closed-loop
-run completes. For each inspected audit item, set `reviewed` and
+The diagnostic matrix must not be treated as scenario evidence merely because
+the processes completed. The October 22 review confirmed the cross-traffic
+collision, rejected the lead-brake near-miss as a safe stop, and found that the
+two red-light runs never reached the intended signal interaction. The Week 1
+checker now requires an explicit semantic `validation.status: pass` in each
+scenario manifest.
+
+Use the official-scenario path below to replace those fragile actor placements.
+It fetches source and route XML only, not a large prerecorded sensor dataset:
+
+```bash
+./scripts/setup_upstream_scenarios_ec2.sh
+./scripts/prepare_week1_upstream_routes_ec2.sh
+```
+
+Review the deterministic selection before starting the GPU simulator:
+
+```bash
+cat ~/av-safeplan-runtime/outputs/upstream/week1_town12_selection.json
+```
+
+Then run the small selected Town12 set through ScenarioRunner v0.9.15 and the
+existing AV SafePlan Behavior Agent adapter:
+
+```bash
+./scripts/run_week1_upstream_behavior_ec2.sh
+```
+
+ScenarioRunner owns the route, actor placement, and official criteria such as
+`CollisionTest` and `RunningRedLightTest`. AV SafePlan still owns the common
+policy boundary, supervisor boundary, `episode.jsonl`, safety labels,
+`trajectory.jsonl`, and RGB frames. Criteria output is saved under
+`week1-upstream/criteria`; AV SafePlan telemetry and images are saved under
+`week1-upstream/telemetry`. Keep Week 1 pending until those criteria and images
+are reviewed and linked into the scenario manifests.
+
+After reviewing one route's official criteria JSON and saved frames, record the
+decision explicitly. A passing decision requires `--visual-reviewed`:
+
+```bash
+./scripts/ec2_run.sh python scripts/record_upstream_scenario_validation.py \
+  ~/av-safeplan-runtime/outputs/trajectories/week1-upstream/telemetry/week1-upstream-0/manifest.json \
+  --family lead_brake \
+  --criteria /path/to/route-0-criteria.json \
+  --status pass \
+  --visual-reviewed \
+  --note "Official criteria passed and the saved frames show the intended lead-brake conflict."
+```
+
+Repeat for `cross_traffic` and `red_light_compliance`. The validation recorder
+stores a SHA-256 digest of the criteria file, so the reviewed evidence cannot be
+silently replaced later.
+
+Week 1 also remains pending until a person reviews at least one positive,
+near-miss, and negative item in `audit_queue.jsonl`, and the frozen SimLingo
+closed-loop run completes. For each inspected audit item, set `reviewed` and
 `label_correct` to `true` and add a short note. Then refresh the report:
 
 ```bash
@@ -413,7 +466,11 @@ The runner uses the common `BasePolicy` observation-to-control interface through
 
 ## 7. Run controlled safety scenarios
 
-The deterministic scenario catalog is stored in `config/scenarios.yaml`. It contains lead-vehicle braking, cross-traffic, cut-in, late-emergence, fixed-red approaches, and green-to-red transition families. Run one through the same policy, logging, and event-label pipeline:
+The original deterministic scenario catalog is stored in
+`config/scenarios.yaml`. It is useful for short diagnostics, but its actor and
+traffic-light placement is not accepted as Week 1 evidence unless the resulting
+manifest contains a reviewed semantic validation. Run a diagnostic through the
+same policy, logging, and event-label pipeline with:
 
 ```bash
 python scripts/smoke_behavior_agent.py \
@@ -421,7 +478,15 @@ python scripts/smoke_behavior_agent.py \
   --steps 120
 ```
 
-Use a different route with `--spawn-index` and `--destination-index` to cover intersection-geometry variations. Scenario parameters and the resolved route are saved in the run manifest.
+Use a different route with `--spawn-index` and `--destination-index` to inspect
+intersection-geometry variations. Scenario parameters and the resolved route
+are saved in the run manifest.
+
+The evidence path is configured in `config/upstream_scenarios.yaml`. It pins
+ScenarioRunner v0.9.15, points to public Leaderboard 2.0 route definitions, and
+selects a small Town12 subset for lead braking, cross traffic, and red-light
+compliance. This keeps the scientific scope small while relying on upstream
+scenario placement and official route criteria.
 
 Collision events come from CARLA's collision sensor. Red-light labels track entry and exit while the signal remains red. Low time-to-collision encounters and moving entries into a red-light trigger are retained as near-miss audit candidates.
 

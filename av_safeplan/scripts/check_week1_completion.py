@@ -8,10 +8,9 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 
 REQUIRED_SCENARIOS: Tuple[str, ...] = (
-    "lead_brake_default",
-    "cross_traffic_default",
-    "red_light_straight_default",
-    "red_light_transition_default",
+    "lead_brake",
+    "cross_traffic",
+    "red_light_compliance",
 )
 AUDIT_CATEGORIES: Tuple[str, ...] = ("positive", "near_miss", "negative")
 
@@ -55,11 +54,24 @@ def scenario_name(manifest: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+def semantically_validated(manifest: Mapping[str, Any]) -> bool:
+    """Require evidence that the intended event occurred, not only process success."""
+    validation = manifest.get("validation")
+    if not isinstance(validation, Mapping):
+        return False
+    return str(validation.get("status", "")).strip().lower() == "pass"
+
+
 def find_scenario_results(session_root: Path) -> Dict[str, bool]:
     found = {name: False for name in REQUIRED_SCENARIOS}
     for path in session_root.glob("**/manifest.json"):
         manifest = load_json(path)
-        if not manifest or manifest.get("outcome", {}).get("status") != "passed":
+        if not manifest or manifest.get("outcome", {}).get("status") not in {
+            "completed",
+            "passed",
+        }:
+            continue
+        if not semantically_validated(manifest):
             continue
         name = scenario_name(manifest)
         if name in found:

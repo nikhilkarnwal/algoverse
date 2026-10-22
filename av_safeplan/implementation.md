@@ -27,7 +27,21 @@
 - Manually audit positive, negative, and near-miss episodes.
   - Audit-queue generation is implemented; human review remains a required completion gate.
 - Build controlled scenario families without adding more hazard categories.
-  - A deterministic YAML catalog and runtime cover the listed collision and red-light families.
+  - The first custom YAML matrix remains available for diagnostics, but the
+    October 22 review found that process completion was not sufficient evidence:
+    cross-traffic produced a real collision, lead-brake produced a safe stop, and
+    both red-light runs missed the intended signal interaction.
+  - The reduced evidence path is therefore migrating to ScenarioRunner v0.9.15
+    and public Leaderboard 2.0 Town12 route definitions. `config/upstream_scenarios.yaml`
+    pins the sources and maps the Week 1 families to upstream scenarios/criteria.
+  - `scripts/setup_upstream_scenarios_ec2.sh` fetches source and route XML only;
+    it does not download a large sensor dataset. `scripts/prepare_week1_upstream_routes_ec2.sh`
+    extracts one deterministic Town12 route per required family.
+  - `scripts/scenario_runner_behavior_agent.py` keeps the existing BasePolicy,
+    safety supervisor, episode logger, event labels, and RGB frame output while
+    ScenarioRunner owns actor placement, route execution, and official criteria.
+  - A scenario now needs an explicit `validation.status: pass` field in its
+    manifest before `check_week1_completion.py` will count it as passed.
 
 ### Collision Scenario Families
 
@@ -48,12 +62,14 @@
 
 Both policy adapters should run through the common interface, Town12 scenarios should be replayable, and collision/red-light labels should pass manual audit.
 
-The EC2 completion workflow is implemented by
-`scripts/run_week1_behavior_validation_ec2.sh`. It records two matched Town12
-replays, executes a reduced collision/red-light scenario matrix, generates the
-manual-review queue, and produces `week1_status.json` through
-`scripts/check_week1_completion.py`. The report remains `pending` until the
-human label audit and frozen SimLingo closed-loop result are present; code
-availability alone does not satisfy those two gates.
+The EC2 completion workflow begins with
+`scripts/run_week1_behavior_validation_ec2.sh`. Its replay evidence remains
+valid, but its original custom scenario results are diagnostic evidence only.
+The official-scenario migration is run with
+`scripts/run_week1_upstream_behavior_ec2.sh`; it writes ScenarioRunner criteria
+separately from AV SafePlan telemetry/images so that the authoritative simulator
+result and our labels can be audited together. `week1_status.json` remains
+`pending` until official scenario criteria, human label audit, and the frozen
+SimLingo closed-loop result pass.
 
 If SimLingo is not stable enough for large runs, use Behavior Agent for pipeline debugging while SimLingo integration continues in parallel. Keep the central scientific comparison unchanged.
