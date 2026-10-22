@@ -41,6 +41,7 @@ paths:
 smoke:
   steps: 200
   behavior: "normal"
+  settle_steps: 10
 
 recording:
   enabled: true

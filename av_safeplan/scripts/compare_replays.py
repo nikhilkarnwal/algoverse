@@ -4,7 +4,7 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 
 def load_json(path: Path) -> Dict[str, Any]:
@@ -26,58 +26,89 @@ def load_trajectory(path: Path) -> List[Dict[str, Any]]:
     ]
 
 
-def maximum_axis_delta(
-    first: Mapping[str, Any],
-    second: Mapping[str, Any],
-    axes: Iterable[str],
-) -> float:
-    return max(abs(float(first[axis]) - float(second[axis])) for axis in axes)
+def axis_delta(first: float, second: float, angular: bool = False) -> float:
+    if angular:
+        return abs((first - second + 180.0) % 360.0 - 180.0)
+    return abs(first - second)
+
+
+def percentile(values: Sequence[float], fraction: float) -> float:
+    ordered = sorted(values)
+    index = int(fraction * (len(ordered) - 1))
+    return float(ordered[index])
+
+
+def metric_summary(
+    first_records: Sequence[Mapping[str, Any]],
+    second_records: Sequence[Mapping[str, Any]],
+    path: Tuple[str, ...],
+    axes: Sequence[str],
+    *,
+    angular: bool = False,
+) -> Dict[str, Any]:
+    observations = []
+    per_axis: Dict[str, List[float]] = {axis: [] for axis in axes}
+    for record_index, (first, second) in enumerate(zip(first_records, second_records)):
+        first_value: Mapping[str, Any] = first
+        second_value: Mapping[str, Any] = second
+        for key in path:
+            first_value = first_value[key]
+            second_value = second_value[key]
+        for axis in axes:
+            left = float(first_value[axis])
+            right = float(second_value[axis])
+            delta = axis_delta(left, right, angular=angular)
+            observations.append((delta, record_index, axis, left, right))
+            per_axis[axis].append(delta)
+
+    maximum = max(observations, key=lambda item: item[0])
+    deltas = [item[0] for item in observations]
+    return {
+        "maximum": maximum[0],
+        "p95": percentile(deltas, 0.95),
+        "mean": sum(deltas) / len(deltas),
+        "maximum_observation": {
+            "record_index": maximum[1],
+            "axis": maximum[2],
+            "first": maximum[3],
+            "second": maximum[4],
+        },
+        "per_axis": {
+            axis: {
+                "maximum": max(values),
+                "p95": percentile(values, 0.95),
+                "mean": sum(values) / len(values),
+            }
+            for axis, values in per_axis.items()
+        },
+    }
 
 
 def compare_records(
     first_records: List[Dict[str, Any]],
     second_records: List[Dict[str, Any]],
-) -> Dict[str, float]:
-    maxima = {
-        "position": 0.0,
-        "rotation": 0.0,
-        "velocity": 0.0,
-        "control": 0.0,
+) -> Dict[str, Dict[str, Any]]:
+    return {
+        "position": metric_summary(
+            first_records, second_records, ("ego", "location"), ("x", "y", "z")
+        ),
+        "rotation": metric_summary(
+            first_records,
+            second_records,
+            ("ego", "rotation"),
+            ("pitch", "yaw", "roll"),
+            angular=True,
+        ),
+        "velocity": metric_summary(
+            first_records, second_records, ("ego", "velocity"), ("x", "y", "z")
+        ),
+        "control": metric_summary(
+            first_records,
+            second_records,
+            ("control",),
+            ("steer", "throttle", "brake"),
+        ),
     }
-    for first, second in zip(first_records, second_records):
-        maxima["position"] = max(
-            maxima["position"],
-            maximum_axis_delta(
-                first["ego"]["location"],
-                second["ego"]["location"],
-                ("x", "y", "z"),
-            ),
-        )
-        maxima["rotation"] = max(
-            maxima["rotation"],
-            maximum_axis_delta(
-                first["ego"]["rotation"],
-                second["ego"]["rotation"],
-                ("pitch", "yaw", "roll"),
-            ),
-        )
-        maxima["velocity"] = max(
-            maxima["velocity"],
-            maximum_axis_delta(
-                first["ego"]["velocity"],
-                second["ego"]["velocity"],
-                ("x", "y", "z"),
-            ),
-        )
-        maxima["control"] = max(
-            maxima["control"],
-            maximum_axis_delta(
-                first["control"],
-                second["control"],
-                ("steer", "throttle", "brake"),
-            ),
-        )
-    return maxima
 
 
 def comparable_configuration(manifest: Mapping[str, Any]) -> Dict[str, Any]:
@@ -89,6 +120,7 @@ def comparable_configuration(manifest: Mapping[str, Any]) -> Dict[str, Any]:
         "carla": manifest.get("carla"),
         "recording": manifest.get("recording"),
         "scenario": manifest.get("scenario"),
+        "initialization": manifest.get("initialization"),
     }
 
 
@@ -141,7 +173,8 @@ def main() -> int:
         print("Replay comparison requires recorded trajectory frames.")
         return 2
 
-    maxima = compare_records(first_records, second_records)
+    metrics = compare_records(first_records, second_records)
+    maxima = {name: summary["maximum"] for name, summary in metrics.items()}
     tolerances = {
         "position": arguments.position_tolerance,
         "rotation": arguments.rotation_tolerance,
@@ -158,6 +191,7 @@ def main() -> int:
         "compared_records": len(first_records),
         "route_id": first_configuration["route"]["route_id"],
         "maximum_deltas": maxima,
+        "metrics": metrics,
         "tolerances": tolerances,
         "failures": failures,
     }

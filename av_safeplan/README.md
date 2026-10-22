@@ -113,6 +113,11 @@ Run the Behavior Agent portion of all Week 1 gates with one command:
 That command starts CARLA once, verifies Town12, records two matched replays,
 compares their drift, runs a reduced collision/red-light scenario matrix, saves
 trajectory images, builds `audit_queue.jsonl`, and writes `week1_status.json`.
+Matched replays reload Town12 before actor creation and hold the ego vehicle at
+brake for ten synchronous settling ticks before the Behavior Agent and recorder
+start. Replay output includes per-axis maximum, mean, and 95th-percentile drift.
+The final status report is written even when replay comparison or an individual
+scenario fails.
 Outputs are placed in a timestamped directory such as:
 
 ```text

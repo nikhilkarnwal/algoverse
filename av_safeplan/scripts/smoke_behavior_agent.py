@@ -51,12 +51,35 @@ def spawn_ego(world, route: RoutePlan, spawn_points):
     return actor, spawn_points[route.destination_index].location
 
 
+def settle_ego(world, actor, settle_steps: int) -> None:
+    """Let vehicle physics settle before policy state and recording begin."""
+    import carla
+
+    actor.apply_control(carla.VehicleControl(brake=1.0, hand_brake=True))
+    for _ in range(settle_steps):
+        world.tick()
+    actor.set_target_velocity(carla.Vector3D(0.0, 0.0, 0.0))
+    actor.set_target_angular_velocity(carla.Vector3D(0.0, 0.0, 0.0))
+    actor.apply_control(carla.VehicleControl(brake=1.0, hand_brake=False))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config" / "stack.yaml")
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--map", dest="map_name", default=None, help="Override the configured map")
     parser.add_argument("--seed", type=int, default=None, help="Override the configured run seed")
+    parser.add_argument(
+        "--reload-world",
+        action="store_true",
+        help="Reload the selected map before spawning actors for a clean replay state",
+    )
+    parser.add_argument(
+        "--settle-steps",
+        type=int,
+        default=None,
+        help="Synchronous brake-held ticks before policy initialization",
+    )
     parser.add_argument(
         "--spawn-index",
         type=int,
@@ -105,8 +128,15 @@ def main() -> int:
     target_map = arguments.map_name or settings.carla.map_name
     run_seed = arguments.seed if arguments.seed is not None else settings.carla.seed
     steps = arguments.steps if arguments.steps is not None else settings.smoke.steps
+    settle_steps = (
+        arguments.settle_steps
+        if arguments.settle_steps is not None
+        else settings.smoke.settle_steps
+    )
     if steps < 1:
         parser.error("--steps must be at least 1")
+    if settle_steps < 0:
+        parser.error("--settle-steps cannot be negative")
     if arguments.observation_radius <= 0:
         parser.error("--observation-radius must be positive")
     recording_settings = replace(
@@ -162,7 +192,21 @@ def main() -> int:
         )
     current_world = client.get_world()
     current_map_name = current_world.get_map().name.rsplit("/", 1)[-1]
-    if current_map_name == target_map:
+    world_reset = False
+    if current_map_name == target_map and arguments.reload_world:
+        print(
+            "Reloading map {} with a {:.0f}-second timeout...".format(
+                target_map,
+                settings.carla.map_load_timeout_seconds,
+            )
+        )
+        client.set_timeout(settings.carla.map_load_timeout_seconds)
+        try:
+            world = client.reload_world()
+        finally:
+            client.set_timeout(settings.carla.timeout_seconds)
+        world_reset = True
+    elif current_map_name == target_map:
         print("Reusing already loaded map {}.".format(target_map))
         world = current_world
     else:
@@ -173,8 +217,11 @@ def main() -> int:
             )
         )
         client.set_timeout(settings.carla.map_load_timeout_seconds)
-        world = client.load_world(target_map)
-        client.set_timeout(settings.carla.timeout_seconds)
+        try:
+            world = client.load_world(target_map)
+        finally:
+            client.set_timeout(settings.carla.timeout_seconds)
+        world_reset = True
     traffic_manager = client.get_trafficmanager(settings.carla.traffic_manager_port)
     apply_deterministic_seeds(world, traffic_manager, run_seed)
     spawn_points = list(world.get_map().get_spawn_points())
@@ -221,6 +268,10 @@ def main() -> int:
         },
     )
     manifest["scenario"] = scenario_spec.to_dict() if scenario_spec else None
+    manifest["initialization"] = {
+        "settle_steps": settle_steps,
+        "world_reset": world_reset,
+    }
     write_run_manifest(manifest_path, manifest)
 
     actor = None
@@ -238,6 +289,7 @@ def main() -> int:
         with SynchronousWorld(world, traffic_manager, settings.carla.fixed_delta_seconds):
             try:
                 actor, destination = spawn_ego(world, route, spawn_points)
+                settle_ego(world, actor, settle_steps)
                 policy = BehaviorAgentPolicy(
                     actor,
                     destination,

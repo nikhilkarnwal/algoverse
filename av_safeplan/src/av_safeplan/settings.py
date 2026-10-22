@@ -55,6 +55,7 @@ class RuntimeSettings:
 class SmokeSettings:
     steps: int
     behavior: str
+    settle_steps: int
 
 
 @dataclass(frozen=True)
@@ -176,6 +177,7 @@ def load_stack(path: Path) -> StackSettings:
         smoke=SmokeSettings(
             steps=int(_required(smoke_data, "steps")),
             behavior=str(_required(smoke_data, "behavior")),
+            settle_steps=int(smoke_data.get("settle_steps", 10)),
         ),
         recording=RecordingSettings(
             enabled=bool(_required(recording_data, "enabled")),
