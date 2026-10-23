@@ -36,7 +36,8 @@
     pins the sources and maps the Week 1 families to upstream scenarios/criteria.
   - `scripts/setup_upstream_scenarios_ec2.sh` fetches source and route XML only;
     it does not download a large sensor dataset. `scripts/prepare_week1_upstream_routes_ec2.sh`
-    extracts one deterministic Town12 route per required family.
+    extracts one deterministic Town12 route per required family and crops it to
+    a bounded window around the selected scenario trigger.
   - `scripts/scenario_runner_behavior_agent.py` keeps the existing BasePolicy,
     safety supervisor, episode logger, event labels, and RGB frame output while
     ScenarioRunner owns actor placement, route execution, and official criteria.

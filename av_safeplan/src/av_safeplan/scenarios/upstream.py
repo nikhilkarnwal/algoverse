@@ -41,6 +41,9 @@ class RouteCandidate:
     scenario_index: Optional[int]
     scenario_name: Optional[str]
     scenario_type: Optional[str]
+    trigger_x: Optional[float]
+    trigger_y: Optional[float]
+    trigger_z: Optional[float]
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -150,8 +153,12 @@ def discover_candidates(route_files: Sequence[Path], town: str) -> List[RouteCan
                 scenario_index=None,
                 scenario_name=None,
                 scenario_type=None,
+                trigger_x=None,
+                trigger_y=None,
+                trigger_z=None,
             ))
             for index, scenario in enumerate(route.findall(".//scenario")):
+                trigger = scenario.find("trigger_point")
                 candidates.append(RouteCandidate(
                     source_file=str(source_file),
                     route_id=route_id,
@@ -159,6 +166,9 @@ def discover_candidates(route_files: Sequence[Path], town: str) -> List[RouteCan
                     scenario_index=index,
                     scenario_name=scenario.attrib.get("name"),
                     scenario_type=scenario.attrib.get("type"),
+                    trigger_x=_optional_float(trigger, "x"),
+                    trigger_y=_optional_float(trigger, "y"),
+                    trigger_z=_optional_float(trigger, "z"),
                 ))
     return sorted(candidates, key=_candidate_sort_key)
 
@@ -172,7 +182,16 @@ def select_week1_candidates(
     missing: List[str] = []
     for family in config.families:
         if family.selection == "route":
-            matching = [candidate for candidate in candidates if candidate.scenario_index is None]
+            if family.scenario_types:
+                matching = [
+                    candidate
+                    for candidate in candidates
+                    if candidate.scenario_type in family.scenario_types
+                ]
+            else:
+                matching = [
+                    candidate for candidate in candidates if candidate.scenario_index is None
+                ]
         else:
             matching = [
                 candidate
@@ -209,6 +228,7 @@ def write_reduced_routes(selections: Sequence[FamilySelection], output_path: Pat
                 )
                 if not keep:
                     scenarios.remove(scenario)
+        _crop_route_around_trigger(route, candidate)
         output_root.append(route)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,6 +241,43 @@ def _find_route(root: Any, route_id: str, town: str) -> Optional[Any]:
         if route.attrib.get("id") == route_id and route.attrib.get("town") == town:
             return route
     return None
+
+
+def _crop_route_around_trigger(
+    route: Any,
+    candidate: RouteCandidate,
+    waypoints_before: int = 1,
+    waypoints_after: int = 1,
+) -> None:
+    """Keep a bounded route window around the selected scenario anchor."""
+    if candidate.trigger_x is None or candidate.trigger_y is None:
+        return
+    waypoints = route.find("waypoints")
+    if waypoints is None:
+        return
+    positions = list(waypoints.findall("position"))
+    if len(positions) < 3:
+        return
+
+    def squared_distance(position: Any) -> float:
+        x = float(position.attrib["x"])
+        y = float(position.attrib["y"])
+        z = float(position.attrib.get("z", candidate.trigger_z or 0.0))
+        return (
+            (x - candidate.trigger_x) ** 2
+            + (y - candidate.trigger_y) ** 2
+            + (z - (candidate.trigger_z or z)) ** 2
+        )
+
+    anchor = min(range(len(positions)), key=lambda index: squared_distance(positions[index]))
+    start = max(0, anchor - waypoints_before)
+    end = min(len(positions), anchor + waypoints_after + 1)
+    if end - start < 2:
+        return
+    retained = set(positions[start:end])
+    for position in positions:
+        if position not in retained:
+            waypoints.remove(position)
 
 
 def _candidate_sort_key(candidate: RouteCandidate) -> Tuple[str, Tuple[int, Any], int, str]:
@@ -238,3 +295,9 @@ def _required_text(value: Mapping[str, Any], key: str, context: str) -> str:
     if not result:
         raise ValueError("{} requires {}".format(context, key))
     return result
+
+
+def _optional_float(element: Optional[Any], key: str) -> Optional[float]:
+    if element is None or key not in element.attrib:
+        return None
+    return float(element.attrib[key])

@@ -30,6 +30,7 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "${OUTPUT_ROOT}/criteria"
 export PYTHONPATH="${PROJECT_ROOT}/src:${CARLA_ROOT}/PythonAPI/carla:${SCENARIO_RUNNER_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+export SCENARIO_RUNNER_ROOT
 export AV_SAFEPLAN_SCENARIO_OUTPUT_ROOT="${OUTPUT_ROOT}/telemetry"
 
 "${PROJECT_ROOT}/scripts/start_carla_ec2_docker.sh"

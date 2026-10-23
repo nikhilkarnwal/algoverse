@@ -36,7 +36,10 @@ families:
 
   red_light_compliance:
     selection: route
-    scenario_types: []
+    scenario_types:
+      - SignalizedJunctionLeftTurn
+      - SignalizedJunctionRightTurn
+      - OppositeVehicleRunningRedLight
     required_criteria:
       - RunningRedLightTest
     expected_outcome: A Town12 route that reaches a signalized junction and is scored by RunningRedLightTest.

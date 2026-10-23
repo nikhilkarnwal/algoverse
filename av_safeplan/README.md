@@ -164,6 +164,11 @@ existing AV SafePlan Behavior Agent adapter:
 ./scripts/run_week1_upstream_behavior_ec2.sh
 ```
 
+The generated routes retain one waypoint before and after each selected trigger
+instead of replaying the full multi-kilometre Leaderboard route. Behavior Agent
+is given ScenarioRunner's exact global plan, so `InRouteTest` evaluates the same
+path that the policy is following.
+
 ScenarioRunner owns the route, actor placement, and official criteria such as
 `CollisionTest` and `RunningRedLightTest`. AV SafePlan still owns the common
 policy boundary, supervisor boundary, `episode.jsonl`, safety labels,

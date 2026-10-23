@@ -19,10 +19,10 @@ from av_safeplan.telemetry.episode import EpisodeLogger
 
 
 def get_entry_point() -> str:
-    return "SafePlanBehaviorAgent"
+    return "ScenarioRunnerBehaviorAgent"
 
 
-class SafePlanBehaviorAgent(AutonomousAgent):
+class ScenarioRunnerBehaviorAgent(AutonomousAgent):
     """Run Behavior Agent inside official ScenarioRunner route execution."""
 
     def setup(self, path_to_conf_file: str) -> None:
@@ -36,6 +36,7 @@ class SafePlanBehaviorAgent(AutonomousAgent):
         self._world = None
         self._destination = None
         self._event_counts: Dict[str, int] = {}
+        self._route_plan_points = 0
         self._saved_images = 0
         self._closed = False
         self._outcome = {"status": "running"}
@@ -159,7 +160,24 @@ class SafePlanBehaviorAgent(AutonomousAgent):
             raise RuntimeError("ScenarioRunner did not provide a world-coordinate route plan")
         destination_transform = self._global_plan_world_coord[-1][0]
         self._destination = destination_transform.location
-        self._policy = BehaviorAgentPolicy(self._ego_vehicle, self._destination)
+        behavior_plan = []
+        carla_map = self._world.get_map()
+        for transform, road_option in self._global_plan_world_coord:
+            location = (
+                transform.transform.location
+                if hasattr(transform, "transform")
+                else transform.location
+            )
+            waypoint = carla_map.get_waypoint(location)
+            if waypoint is None:
+                raise RuntimeError("ScenarioRunner route contains an unmapped waypoint")
+            behavior_plan.append((waypoint, road_option))
+        self._route_plan_points = len(behavior_plan)
+        self._policy = BehaviorAgentPolicy(
+            self._ego_vehicle,
+            destination=self._destination,
+            global_plan=behavior_plan,
+        )
         self._event_monitor = SafetyEventMonitor(self._world, self._ego_vehicle)
         self._event_monitor.start()
         seed = int(os.environ.get("AV_SAFEPLAN_SCENARIO_SEED", "0"))
@@ -202,6 +220,7 @@ class SafePlanBehaviorAgent(AutonomousAgent):
             "route_id": os.environ.get("AV_SAFEPLAN_SCENARIO_ROUTE_ID"),
             "seed": int(os.environ.get("AV_SAFEPLAN_SCENARIO_SEED", "0")),
             "event_counts": dict(sorted(self._event_counts.items())),
+            "route_plan_points": self._route_plan_points,
             "saved_images": self._saved_images,
             "episode_records": (
                 self._episode_logger.records_written
