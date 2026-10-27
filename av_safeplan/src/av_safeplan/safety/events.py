@@ -117,7 +117,9 @@ class RedLightMonitor:
             self._minimum_speed = min(self._minimum_speed, speed)
             if speed >= self.moving_threshold_mps and not self._encroachment_emitted:
                 events.append(SafetyEvent(
-                    event_type="red_light_encroachment",
+                    # Entering the light's trigger volume while slowing is
+                    # not a violation or a near miss by itself.
+                    event_type="red_light_trigger_entry",
                     frame=observation.frame,
                     details={"traffic_light_id": light_id, "speed_mps": speed},
                 ))

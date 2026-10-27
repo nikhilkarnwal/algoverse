@@ -24,6 +24,8 @@ class ScenarioFamily:
     required_criteria: Tuple[str, ...]
     expected_outcome: str
     requires_live_validation: bool
+    implementation_type: Optional[str]
+    parameters: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,8 @@ def load_upstream_config(path: Path) -> UpstreamScenarioConfig:
                 "family {!r}".format(name),
             ),
             requires_live_validation=bool(family.get("requires_live_validation", True)),
+            implementation_type=str(family["implementation_type"]) if family.get("implementation_type") else None,
+            parameters={str(key): str(value) for key, value in family.get("parameters", {}).items()},
         ))
     return UpstreamScenarioConfig(town=town, sources=sources, families=tuple(families))
 
@@ -228,6 +232,14 @@ def write_reduced_routes(selections: Sequence[FamilySelection], output_path: Pat
                 )
                 if not keep:
                     scenarios.remove(scenario)
+                else:
+                    if selection.family.implementation_type:
+                        scenario.set("type", selection.family.implementation_type)
+                    for name, value in selection.family.parameters.items():
+                        parameter = scenario.find(name)
+                        if parameter is None:
+                            parameter = ElementTree.SubElement(scenario, name)
+                        parameter.set("value", value)
         _crop_route_around_trigger(route, candidate)
         output_root.append(route)
 

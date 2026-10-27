@@ -34,6 +34,21 @@ class SimLingoPolicy(BasePolicy):
         self._agent = LingoAgent(host, port, debug)
         self._agent.set_global_plan(list(global_plan_gps), list(global_plan_world))
         self._agent.setup(str(checkpoint), route_index=route_index)
+        self._run_step = self._agent.run_step
+        self._owns_agent = True
+
+    @classmethod
+    def from_initialized_agent(cls, agent: Any, run_step: Any) -> "SimLingoPolicy":
+        """Bind a Leaderboard-owned agent without loading another model.
+
+        Pass the upstream bound run_step method, not the recording wrapper's
+        method, to avoid recursive calls. Leaderboard retains lifecycle ownership.
+        """
+        policy = cls.__new__(cls)
+        policy._agent = agent
+        policy._run_step = run_step
+        policy._owns_agent = False
+        return policy
 
     def sensor_specifications(self) -> Sequence[Mapping[str, Any]]:
         return self._agent.sensors()
@@ -43,7 +58,7 @@ class SimLingoPolicy(BasePolicy):
             raise ValueError(
                 "SimLingo requires the official Leaderboard sensor dictionary"
             )
-        control = self._agent.run_step(
+        control = self._run_step(
             dict(observation.sensors),
             timestamp=observation.timestamp_seconds,
         )
@@ -51,5 +66,6 @@ class SimLingoPolicy(BasePolicy):
 
     def close(self) -> None:
         if self._agent is not None:
-            self._agent.destroy()
+            if self._owns_agent:
+                self._agent.destroy()
             self._agent = None

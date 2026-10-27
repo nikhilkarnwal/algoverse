@@ -71,6 +71,8 @@ def _load_json(path: Path) -> Dict[str, Any]:
 def _find_result_status(value: Any) -> str:
     """Capture an upstream status for audit context without deciding the pass."""
     if isinstance(value, dict):
+        if isinstance(value.get("success"), bool):
+            return "success" if value["success"] else "failure"
         for key in ("status", "result", "entry_status"):
             if key in value and not isinstance(value[key], (dict, list)):
                 return str(value[key])

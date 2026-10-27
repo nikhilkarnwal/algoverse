@@ -39,6 +39,7 @@ orjson==3.10.15
 packaging==23.2
 pandas==2.0.3
 peft==0.13.2
+pexpect==4.9.0
 pillow==10.2.0
 portalocker==2.8.2
 protobuf==4.25.3

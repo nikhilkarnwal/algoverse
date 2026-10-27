@@ -57,7 +57,7 @@ def check_module(
         return CheckResult(name, "pass", "imported successfully", required)
     return CheckResult(
         name,
-        "pass" if actual == expected else "fail",
+        "pass" if actual is not None and actual.split("+", 1)[0] == expected else "fail",
         "expected {}, found {}".format(expected, actual or "unknown"),
         required,
     )
@@ -157,6 +157,9 @@ def run_offline_checks(settings: StackSettings) -> List[CheckResult]:
         check_module("flash_attn", settings.runtime.flash_attn, distribution="flash-attn"),
         check_module("carla", settings.carla.version, distribution="carla"),
         check_carla_agents(),
+        # Import the evaluator as well as the policy: its dependency tree includes
+        # optional agent wrappers even when the selected policy does not use ROS.
+        check_module("leaderboard.leaderboard_evaluator", None),
         check_cuda(settings.runtime.cuda_required),
         check_path("carla_root", settings.carla_root),
         check_path("simlingo_root", settings.simlingo.root),

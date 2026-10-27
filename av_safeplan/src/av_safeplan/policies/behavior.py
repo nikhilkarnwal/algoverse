@@ -32,6 +32,8 @@ class BehaviorAgentPolicy(BasePolicy):
 
     def act(self, observation: PolicyObservation) -> VehicleControlCommand:
         del observation
+        if self._agent.done():
+            return VehicleControlCommand(steer=0.0, throttle=0.0, brake=1.0)
         return VehicleControlCommand.from_carla(self._agent.run_step())
 
     def done(self) -> bool:

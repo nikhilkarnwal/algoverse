@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 
 POSITIVE_EVENTS = {"collision", "red_light_violation"}
-NEAR_MISS_EVENTS = {"near_miss", "red_light_encroachment"}
+NEAR_MISS_EVENTS = {"near_miss"}
 
 
 def read_records(path: Path) -> List[Dict[str, Any]]:
@@ -94,6 +94,13 @@ def build_queue(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("runs_root", type=Path)
+    parser.add_argument(
+        "--episode",
+        action="append",
+        type=Path,
+        default=[],
+        help="Use only this episode.jsonl; repeat for a curated review set",
+    )
     parser.add_argument("--output", type=Path, default=Path("audit_queue.jsonl"))
     parser.add_argument("--negatives-per-run", type=int, default=3)
     parser.add_argument("--window-frames", type=int, default=10)
@@ -104,7 +111,15 @@ def main() -> int:
     if arguments.window_frames < 0:
         parser.error("--window-frames cannot be negative")
 
-    episode_paths = arguments.runs_root.expanduser().resolve().glob("**/episode.jsonl")
+    episode_paths = (
+        [path.expanduser().resolve() for path in arguments.episode]
+        if arguments.episode
+        else arguments.runs_root.expanduser().resolve().glob("**/episode.jsonl")
+    )
+    if arguments.episode:
+        for path in episode_paths:
+            if not path.is_file():
+                parser.error("episode does not exist: {}".format(path))
     queue = build_queue(
         episode_paths,
         negatives_per_run=arguments.negatives_per_run,

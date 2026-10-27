@@ -75,6 +75,16 @@ def collect_observation(
             "location": vector_to_dict(light.get_location()),
         })
 
+    # Nearby signals may control other approaches to the junction. Record the
+    # light CARLA associates with the ego vehicle separately for label review.
+    at_traffic_light = bool(ego_vehicle.is_at_traffic_light())
+    ego_traffic_light = ego_vehicle.get_traffic_light()
+    ego_light_state: Dict[str, Any] = {
+        "at_traffic_light": at_traffic_light,
+        "id": int(ego_traffic_light.id) if ego_traffic_light is not None else None,
+        "state": str(ego_traffic_light.state) if ego_traffic_light is not None else None,
+    }
+
     route: Dict[str, Any] = {"route_id": route_id}
     if destination is not None:
         route["destination"] = vector_to_dict(destination)
@@ -87,7 +97,7 @@ def collect_observation(
         timestamp_seconds=float(timestamp_seconds),
         ego=actor_state(ego_vehicle),
         nearby_actors={"items": nearby, "radius_m": float(radius_m)},
-        traffic_lights={"items": traffic_lights, "radius_m": float(radius_m)},
+        traffic_lights={"ego": ego_light_state, "items": traffic_lights, "radius_m": float(radius_m)},
         route=route,
         sensors=sensors or {},
     )

@@ -35,12 +35,13 @@ families:
     requires_live_validation: true
 
   red_light_compliance:
-    selection: route
+    selection: scenario
+    implementation_type: AVSafePlanSignalizedJunctionLeftTurn
+    parameters:
+      green_light_delay: 20
     scenario_types:
       - SignalizedJunctionLeftTurn
-      - SignalizedJunctionRightTurn
-      - OppositeVehicleRunningRedLight
     required_criteria:
       - RunningRedLightTest
-    expected_outcome: A Town12 route that reaches a signalized junction and is scored by RunningRedLightTest.
+    expected_outcome: An isolated Town12 signalized-junction approach with ego-light state and RunningRedLightTest recorded.
     requires_live_validation: true

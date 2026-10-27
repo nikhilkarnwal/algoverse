@@ -2,6 +2,15 @@
 
 Modular infrastructure for studying calibrated multi-hazard safety supervision in CARLA.
 
+## Week 2: dataset preparation
+
+The CPU-only dataset converter, future-hazard sampling, conservative route-group
+splits, review templates, and quality/collection reports are implemented.
+See [the runbook](docs/week2_runbook.md) for local/EC2 commands and
+[the dataset contract](docs/dataset_spec.md) for label and leakage safeguards.
+Candidate samples are not automatically training-ready; incomplete future
+windows and unverified labels stay masked. No model training is part of this step.
+
 This milestone provides the pinned CARLA/SimLingo runtime, a common policy interface, deterministic route replay, Behavior Agent and frozen SimLingo adapters, structured episode telemetry, safety-event labels, controlled scenario families, and manual-audit tooling. CARLA, SimLingo, and model weights remain external to this repository.
 
 ## Pinned stack
@@ -164,10 +173,24 @@ existing AV SafePlan Behavior Agent adapter:
 ./scripts/run_week1_upstream_behavior_ec2.sh
 ```
 
-The generated routes retain one waypoint before and after each selected trigger
-instead of replaying the full multi-kilometre Leaderboard route. Behavior Agent
+The generated routes are traced on Town12 roads and windowed to about 50 m
+before and 80 m after each selected trigger instead of replaying the full
+multi-kilometre Leaderboard route. Behavior Agent
 is given ScenarioRunner's exact global plan, so `InRouteTest` evaluates the same
 path that the policy is following.
+
+The red-light route uses a project-owned ScenarioRunner extension. It retains
+the public signalized-junction light assignment, holds the ego light red for
+20 seconds, and omits the public oncoming actor flow to isolate signal
+compliance. The trajectory records `traffic_lights.ego` separately from nearby
+lights; only the ego-associated signal should be used to interpret a stop.
+`red_light_trigger_entry` is diagnostic, not a violation or near-miss label.
+The EC2 runner caps each route at 300 wall-clock seconds by default; set
+`WEEK1_ROUTE_WALL_TIMEOUT_SECONDS` to override that cap.
+
+For a single low-cost validation run, set `WEEK1_UPSTREAM_ROUTE_IDS=2` before
+`./scripts/run_week1_upstream_behavior_ec2.sh`. The runner regenerates the
+route selection from the current configuration before starting CARLA.
 
 ScenarioRunner owns the route, actor placement, and official criteria such as
 `CollisionTest` and `RunningRedLightTest`. AV SafePlan still owns the common
@@ -194,22 +217,82 @@ Repeat for `cross_traffic` and `red_light_compliance`. The validation recorder
 stores a SHA-256 digest of the criteria file, so the reviewed evidence cannot be
 silently replaced later.
 
-Week 1 also remains pending until a person reviews at least one positive,
-near-miss, and negative item in `audit_queue.jsonl`, and the frozen SimLingo
-closed-loop run completes. For each inspected audit item, set `reviewed` and
-`label_correct` to `true` and add a short note. Then refresh the report:
+An upstream scenario validation pass means the intended event is supported by
+the official criteria and reviewed footage; it does not mean the driving policy
+passed the route. For example, an intentional cross-traffic collision can be
+valid scenario evidence while the official route result is a failure.
+
+Week 1 also remains pending until a person confirms at least one positive,
+near-miss, and negative label in `audit_queue.jsonl`, and the frozen SimLingo
+closed-loop run completes. For each confirmed audit item, set `reviewed` and
+`label_correct` to `true` and add a short note. Then refresh the report using
+the separate upstream evidence directory:
 
 ```bash
 SESSION=~/av-safeplan-runtime/outputs/trajectories/week1-validation-YYYYMMDDTHHMMSSZ
-./scripts/ec2_run.sh python scripts/check_week1_completion.py "$SESSION" --allow-pending
+UPSTREAM=~/av-safeplan-runtime/outputs/trajectories/week1-upstream
+./scripts/ec2_run.sh python scripts/check_week1_completion.py "$SESSION" \
+  --scenario-evidence-root "$UPSTREAM/telemetry" \
+  --audit-queue "$UPSTREAM/audit_queue.jsonl" \
+  --allow-pending
 ```
 
-After the SimLingo environment, checkpoint, and route file are available, save
-its Leaderboard result inside the same session and include it in the final
-check:
+Install the frozen SimLingo stack on EC2 in three resumable stages. These use a
+dedicated Python environment and an isolated CUDA 12.1 compiler; they do not
+replace the host NVIDIA driver or the Behavior Agent environment:
 
 ```bash
-./scripts/ec2_run.sh python scripts/run_simlingo_leaderboard.py \
+./scripts/setup_simlingo_ec2.sh --source
+./scripts/setup_simlingo_ec2.sh --runtime
+./scripts/setup_simlingo_ec2.sh --models
+./scripts/simlingo_ec2_run.sh python scripts/verify_stack.py --json
+```
+
+The setup stages do not start CARLA or run an evaluation. For the later
+closed-loop gate, save the Leaderboard result inside the same session and
+include it in the final check:
+
+Before starting CARLA, verify the cached conversation module and evaluation
+adapter with `run_simlingo_leaderboard.py --preflight-only` and the same
+`--routes` and `--output-dir` arguments shown below. The launcher links the
+cached model snapshot into the run directory and uses that directory as its
+working directory; no duplicate model download is needed. A project-owned
+compatibility entry point handles cleanup without requiring the unpublished
+`data_module.encoder` configuration key. It retains the upstream driving logic.
+
+Shared recording is now enabled by default in the SimLingo launcher. Each
+episode gets a unique `telemetry/episode-*/` directory containing:
+
+- `episode.jsonl`: pre-action ego/actor/light/route state, base and supervisor
+  controls, intervention flag, and candidate safety events.
+- `trajectory.jsonl`: world and camera frame IDs, image path, pose, velocity,
+  and the returned control. Camera/world frame mismatches stop recording.
+- `rgb/frame_*.png` and `trajectory.mp4`: the existing `rgb_0` front camera,
+  played at simulation FPS rather than wall-clock inference speed.
+- `manifest.json`: counts, camera, route/source, seed, timestamps, and recorder
+  outcome. `closed` means recording closed, not that the driving route passed.
+
+The runner binds the already-loaded upstream agent to `SimLingoPolicy`, then
+uses `PassthroughSupervisor` and the same observation, episode logger, and safety
+monitor as Behavior Agent. No second model is loaded. Labels are heuristic
+candidates requiring human audit; official scores remain in the parent run's
+`simulation_results.json`. `--no-images` keeps shared telemetry but omits both
+PNG and MP4; `--no-recording` reproduces the upstream-only baseline path.
+If the process is killed before MP4 finalization, retained PNG frames can be
+encoded afterward with `scripts/encode_episode_video.py`.
+
+Baseline evidence: `simlingo-route2-20261024T062511Z/simulation_results.json`
+under the EC2 trajectories root records 100% completion and score 96.926889,
+with two minimum-speed penalties and no collision/red-light/stop violations.
+This baseline predates the shared recording integration. The completed
+`week2-simlingo-20261027T011413Z` pilot now validates the recording path:
+100% completion, score 100, no official infractions, 346 aligned records/PNGs,
+and 346 decoded MP4 frames at 20 fps. Its `recording_integrity.json` verifies
+frame/control alignment; human semantic label review remains required. Offline import checks alone
+do not establish frame alignment, label correctness, or MP4 completion.
+
+```bash
+./scripts/simlingo_ec2_run.sh python scripts/run_simlingo_leaderboard.py \
   --routes /path/to/routes.xml \
   --output-dir "$SESSION/simlingo"
 
@@ -218,9 +301,9 @@ check:
   --simlingo-results "$SESSION/simlingo/simulation_results.json"
 ```
 
-The lightweight Behavior Agent environment does not install the multi-gigabyte
-SimLingo model stack. Install and run that only when you are ready for its
-completion gate, so paid GPU time and disk usage are not consumed prematurely.
+The lightweight Behavior Agent environment remains separate from the
+multi-gigabyte SimLingo model stack. Start CARLA only for the closed-loop run
+and stop it afterward.
 
 ### Copy trajectory images to your Mac
 

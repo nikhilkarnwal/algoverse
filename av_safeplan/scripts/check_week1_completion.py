@@ -142,6 +142,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("session_root", type=Path)
     parser.add_argument(
+        "--scenario-evidence-root",
+        type=Path,
+        default=None,
+        help="Directory containing reviewed scenario manifests (defaults to session root)",
+    )
+    parser.add_argument(
+        "--audit-queue",
+        type=Path,
+        default=None,
+        help="Reviewed audit_queue.jsonl path (defaults to session root)",
+    )
+    parser.add_argument(
         "--simlingo-results",
         type=Path,
         default=None,
@@ -159,8 +171,18 @@ def main() -> int:
         parser.error("session root does not exist: {}".format(session_root))
 
     replay_comparison = load_json(session_root / "replay_comparison.json") or {}
-    scenario_results = find_scenario_results(session_root)
-    audit_items = load_json_lines(session_root / "audit_queue.jsonl")
+    scenario_evidence_root = (
+        arguments.scenario_evidence_root.expanduser().resolve()
+        if arguments.scenario_evidence_root is not None
+        else session_root
+    )
+    audit_queue_path = (
+        arguments.audit_queue.expanduser().resolve()
+        if arguments.audit_queue is not None
+        else session_root / "audit_queue.jsonl"
+    )
+    scenario_results = find_scenario_results(scenario_evidence_root)
+    audit_items = load_json_lines(audit_queue_path)
     audit_present, audit_approved = audit_result(audit_items)
     simlingo_path = (
         arguments.simlingo_results.expanduser().resolve()
@@ -201,6 +223,10 @@ def main() -> int:
     report = {
         "status": "complete" if complete else "pending",
         "session_root": str(session_root),
+        "evidence": {
+            "scenario_root": str(scenario_evidence_root),
+            "audit_queue": str(audit_queue_path),
+        },
         "gates": gates,
     }
     output_path = session_root / "week1_status.json"

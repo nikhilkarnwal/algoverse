@@ -37,6 +37,9 @@ class ScenarioRunnerBehaviorAgent(AutonomousAgent):
         self._destination = None
         self._event_counts: Dict[str, int] = {}
         self._route_plan_points = 0
+        self._route_geometry = []
+        self._map_name = None
+        self._fixed_delta_seconds = None
         self._saved_images = 0
         self._closed = False
         self._outcome = {"status": "running"}
@@ -79,6 +82,12 @@ class ScenarioRunnerBehaviorAgent(AutonomousAgent):
             self._ensure_initialized()
             snapshot = self._world.get_snapshot()
             frame = int(snapshot.frame)
+            camera = input_data.get("Center")
+            if not isinstance(camera, tuple) or len(camera) != 2:
+                raise RuntimeError("Center camera must retain its actual sensor frame")
+            sensor_frame = int(camera[0])
+            if sensor_frame != frame:
+                raise RuntimeError("Camera/world frame mismatch: {} != {}".format(sensor_frame, frame))
             timestamp_seconds = float(snapshot.timestamp.elapsed_seconds)
             sensor_summary = _sensor_summary(input_data)
             observation = collect_observation(
@@ -109,7 +118,7 @@ class ScenarioRunnerBehaviorAgent(AutonomousAgent):
             velocity = self._ego_vehicle.get_velocity()
             self._trajectory_writer.append(build_trajectory_record(
                 world_frame=frame,
-                sensor_frame=frame,
+                sensor_frame=sensor_frame,
                 timestamp_seconds=timestamp_seconds,
                 image_path=relative_image,
                 control=decision.action.to_dict(),
@@ -125,6 +134,8 @@ class ScenarioRunnerBehaviorAgent(AutonomousAgent):
                 },
                 velocity={"x": velocity.x, "y": velocity.y, "z": velocity.z},
             ))
+            if self._episode_logger.records_written % 20 == 0:
+                self._write_manifest()
             return decision.action.to_carla()
         except Exception as error:
             self._outcome = {"status": "failed", "error": repr(error)}
@@ -150,6 +161,8 @@ class ScenarioRunnerBehaviorAgent(AutonomousAgent):
         if self._policy is not None:
             return
         self._world = CarlaDataProvider.get_world()
+        self._map_name = self._world.get_map().name
+        self._fixed_delta_seconds = self._world.get_settings().fixed_delta_seconds
         for actor in self._world.get_actors().filter("vehicle.*"):
             if actor.attributes.get("role_name") == "hero":
                 self._ego_vehicle = actor
@@ -164,15 +177,19 @@ class ScenarioRunnerBehaviorAgent(AutonomousAgent):
         carla_map = self._world.get_map()
         for transform, road_option in self._global_plan_world_coord:
             location = (
-                transform.transform.location
-                if hasattr(transform, "transform")
-                else transform.location
+                transform.location
+                if hasattr(transform, "location")
+                else transform.transform.location
             )
             waypoint = carla_map.get_waypoint(location)
             if waypoint is None:
                 raise RuntimeError("ScenarioRunner route contains an unmapped waypoint")
             behavior_plan.append((waypoint, road_option))
         self._route_plan_points = len(behavior_plan)
+        self._route_geometry = [
+            {"x": float(waypoint.transform.location.x), "y": float(waypoint.transform.location.y),
+             "z": float(waypoint.transform.location.z)} for waypoint, _ in behavior_plan
+        ]
         self._policy = BehaviorAgentPolicy(
             self._ego_vehicle,
             destination=self._destination,
@@ -219,8 +236,19 @@ class ScenarioRunnerBehaviorAgent(AutonomousAgent):
             "policy": "behavior_agent",
             "route_id": os.environ.get("AV_SAFEPLAN_SCENARIO_ROUTE_ID"),
             "seed": int(os.environ.get("AV_SAFEPLAN_SCENARIO_SEED", "0")),
+            "seed_application": {
+                "python_numpy_provider": os.environ.get("AV_SAFEPLAN_PROCESS_SEED_APPLIED") == "1",
+                "traffic_manager": "see collection command --trafficManagerSeed",
+                "pedestrian_seed": "not explicitly set; no deterministic replay claim",
+            },
             "event_counts": dict(sorted(self._event_counts.items())),
             "route_plan_points": self._route_plan_points,
+            "route_geometry": self._route_geometry,
+            "map": self._map_name,
+            "fixed_delta_seconds": self._fixed_delta_seconds,
+            "sensor_timing": {"source": "sensor_callback_frame", "camera": "Center", "strict_alignment": True},
+            "detectors": {"collision": "carla_collision_sensor", "red_light_violation": "trigger_exit_heuristic_v1"},
+            "source_routes": os.environ.get("AV_SAFEPLAN_SOURCE_ROUTES"),
             "saved_images": self._saved_images,
             "episode_records": (
                 self._episode_logger.records_written
@@ -233,10 +261,12 @@ class ScenarioRunnerBehaviorAgent(AutonomousAgent):
             "outcome": self._outcome,
             "authoritative_result": "ScenarioRunner criteria JSON",
         }
-        self._manifest_path.write_text(
+        temporary = self._manifest_path.with_suffix(".json.tmp")
+        temporary.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        temporary.replace(self._manifest_path)
 
 
 def _sensor_summary(input_data: Dict[str, Any]) -> Dict[str, Any]:
