@@ -184,3 +184,17 @@ The six engineering steps are implemented and exercised, but training-readiness
 remains pending human interval review, independent coverage, and a data-volume
 protocol. Do not infer relative policy performance from this tiny pilot or
 assume ScenarioRunner and Leaderboard instantiate identical traffic interactions.
+
+### Subsequent review and scope update
+
+`week2-reviewed-v1` applies three human approvals: the firetruck collision onset,
+one collision-negative interval and one stopped-at-red negative interval. It has
+17 confirmed targets, but only two enabled negative losses; the 15 confirmed
+collision-positive targets retain the unreviewed-near-miss exclusion. The earlier
+curated pilot and its reports remain unchanged. The later route-2 crossing is
+unverified because the signal is outside the camera view.
+
+The approved project now explicitly requires vehicle, pedestrian and static-object
+collision coverage. See [collection_plan.md](collection_plan.md) for staged collection,
+safe counterparts, evaluation breakdowns and remaining readiness gates. Broader
+coverage is planned, not supplied by the existing vehicle-only collision examples.

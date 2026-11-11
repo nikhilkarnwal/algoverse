@@ -2,6 +2,20 @@
 
 Modular infrastructure for studying calibrated multi-hazard safety supervision in CARLA.
 
+The approved scope is broad collision risk (vehicles, pedestrians, static objects)
+plus red-light violations. The model retains one collision target. Collection and
+evaluation must cover each collision category separately; the current pilot only
+establishes vehicle collision examples. See the [expanded collection plan](docs/collection_plan.md).
+
+## Offline risk training setup
+
+The [risk-training runbook](docs/risk_training.md) covers completed-campaign
+indexing with frozen splits, a separate Python environment, a bounded CPU smoke
+check, gated supervised training, evaluation and a shadow-only inference boundary.
+The October 29 dataset has 729 unreviewed candidate windows from six completed
+routes. Full training is blocked on review and validation positive-class coverage.
+No SimLingo fine-tuning, PPO, test evaluation or active control override was run.
+
 ## Week 2: dataset preparation
 
 The CPU-only dataset converter, future-hazard sampling, conservative route-group
@@ -10,6 +24,10 @@ See [the runbook](docs/week2_runbook.md) for local/EC2 commands and
 [the dataset contract](docs/dataset_spec.md) for label and leakage safeguards.
 Candidate samples are not automatically training-ready; incomplete future
 windows and unverified labels stay masked. No model training is part of this step.
+
+Schema v2 adds [collision categories and coverage reports](docs/collision_categories.md)
+outside model inputs. The authorized near-miss waiver is an explicit build option,
+not fabricated human label approval. Legacy behavior remains reproducible.
 
 This milestone provides the pinned CARLA/SimLingo runtime, a common policy interface, deterministic route replay, Behavior Agent and frozen SimLingo adapters, structured episode telemetry, safety-event labels, controlled scenario families, and manual-audit tooling. CARLA, SimLingo, and model weights remain external to this repository.
 
@@ -607,3 +625,12 @@ The adapter loads the frozen checkpoint configured by `SIMLINGO_CHECKPOINT`; tra
 - Heavy framework imports occur only inside verification or execution functions.
 - CARLA synchronous state is restored on exit.
 - Weights, CARLA distributions, logs, and generated datasets stay outside Git.
+
+### Custom training encounters
+
+Six opt-in custom ScenarioRunner configurations (lead braking, pedestrian
+crossing, and parked obstacles; two each) are documented in
+[Custom encounters](docs/custom_encounters.md). They support three to five early,
+sequential encounters and stop the episode on first collision. These are not
+official benchmark cases. Live placement and driving validation remain pending;
+implementation does not authorize or automatically launch collection.

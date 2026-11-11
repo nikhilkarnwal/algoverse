@@ -8,6 +8,7 @@ import struct
 import subprocess
 
 from av_safeplan.dataset import SCHEMA_VERSION
+from av_safeplan.dataset.categories import Coverage, VERSION as CATEGORY_VERSION, collision_metadata
 from av_safeplan.dataset.labels import HAZARDS, extract_evidence, target
 from av_safeplan.dataset.sources import contained, digest, file_hash, finite, load_episode, read_json
 from av_safeplan.dataset.splits import assign
@@ -69,8 +70,11 @@ def image_input(root, episode, row):
 
 
 def build(root, output, project, horizon=3., stride=.2, seed=2026,
-          include=(), previous_splits=None, negative_keep=1.):
+          include=(), previous_splits=None, negative_keep=1., near_miss_policy="exclude",
+          frozen_assignments=None):
     provenance = code_provenance(Path(project))
+    if near_miss_policy not in ("exclude", "waive_manual_review"):
+        raise ValueError("Invalid near-miss policy")
     root, output = Path(root).resolve(), Path(output).resolve()
     if not root.is_dir():
         raise ValueError("source root does not exist")
@@ -98,10 +102,34 @@ def build(root, output, project, horizon=3., stride=.2, seed=2026,
     if not episodes:
         raise ValueError("No readable episodes: " + json.dumps(failures[:5]))
     splits = assign(episodes, seed, read_json(Path(previous_splits)) if previous_splits else None)
+    if frozen_assignments is not None:
+        # A campaign split is frozen before outcomes; never randomize it again.
+        if set(frozen_assignments) != {e['id'] for e in episodes}:
+            raise ValueError('Frozen assignments must cover exactly the selected episodes')
+        grouped = {}
+        for component in splits['groups']:
+            if len({frozen_assignments[e]['split'] for e in component['episodes']}) != 1:
+                raise ValueError('Overlapping geometry crosses frozen splits')
+        for ep in episodes:
+            entry = dict(frozen_assignments[ep['id']])
+            if entry['split'] not in ('train', 'validation', 'test') or not entry['group_id']:
+                raise ValueError('Invalid frozen assignment')
+            entry['geometry_verified'] = splits['assignments'][ep['id']]['geometry_verified']
+            if not entry['geometry_verified']:
+                raise ValueError('Frozen route geometry must be verified')
+            prior = grouped.setdefault(entry['group_id'], {'group_id': entry['group_id'], 'split': entry['split'], 'episodes': []})
+            if prior['split'] != entry['split']:
+                raise ValueError('Frozen group crosses splits')
+            prior['episodes'].append(ep['id'])
+            splits['assignments'][ep['id']] = entry
+        splits.update(groups=list(grouped.values()), ratios=None,
+                      grouping='Frozen campaign assignments, checked against geometry overlap',
+                      held_out_estimate_available={v['split'] for v in grouped.values()} == {'train', 'validation', 'test'})
     output.mkdir(parents=True, exist_ok=False)
     counts, reasons, labels, policies, strata = Counter(), Counter(), Counter(), Counter(), Counter()
     hazard_counts, event_counts, episode_outcomes = Counter(), Counter(), Counter()
     inventory = []
+    coverage = Coverage()
     (output / "review_templates").mkdir()
     with (output / "samples.jsonl").open("w") as samples, (output / "evidence.jsonl").open("w") as evidence_stream, (output / "episodes.jsonl").open("w") as ep_stream, (output / "review_queue.jsonl").open("w") as review_stream:
         for descriptor in episodes:
@@ -113,6 +141,8 @@ def build(root, output, project, horizon=3., stride=.2, seed=2026,
                 write_row(evidence_stream, event)
                 event_counts[event["event_type"] or "unknown"] += 1
             assignment = splits["assignments"][ep["id"]]
+            evidence_by_id = {e["evidence_id"]: e for e in events}
+            coverage.episode(ep, assignment, events)
             paths_seen = set()
             for record in ep["trajectory"].values():
                 if record.get("image") and record["image"] != ".":
@@ -168,8 +198,10 @@ def build(root, output, project, horizon=3., stride=.2, seed=2026,
                     input_errors.append("route_geometry_unverified")
                 if ep["delta"] is None or ep["delta"] <= 0:
                     input_errors.append("timing_unverified")
-                if nearby_misses:
+                if nearby_misses and near_miss_policy == "exclude":
                     input_errors.append("unreviewed_near_miss_or_legacy_encroachment")
+                elif any(e["event_type"] == "red_light_encroachment" for e in nearby_misses):
+                    input_errors.append("unreviewed_legacy_encroachment")
                 if event_errors:
                     input_errors.extend(event_errors)
                 if ep["official"] and ep["official"].get("collection_integrity") != "pass":
@@ -193,9 +225,14 @@ def build(root, output, project, horizon=3., stride=.2, seed=2026,
                                          "applied_action": row["safety_supervisor_action"],
                                          "supervisor_intervened": row["supervisor_intervened"]},
                           "near_miss_evidence_ids": [e["evidence_id"] for e in nearby_misses],
+                          "near_miss_review": {"policy": near_miss_policy,
+                                               "status": "manual_review_waived" if near_miss_policy == "waive_manual_review" else "unreviewed",
+                                               "human_reviewed": False, "semantic_correctness": "unverified"},
+                          "collision_metadata": collision_metadata(targets["collision"], evidence_by_id),
                           "sampling": {"category": category, "probability": probability, "weight": 1. / probability},
                           "eligibility": {"supervised": eligible, "reason_codes": sorted(set(input_errors))}, **assignment}
                 write_row(samples, sample)
+                coverage.sample(sample)
                 counts["samples"] += 1
                 counts["supervised_samples"] += int(eligible)
                 counts["verified_camera_samples"] += int(alignment == "verified")
@@ -212,6 +249,8 @@ def build(root, output, project, horizon=3., stride=.2, seed=2026,
                 if file_hash(contained(root, ep["path"].parent / name)) != expected:
                     raise ValueError("Source changed while processing: " + ep["relative"])
     write_json(output / "splits.json", splits)
+    collision_coverage = coverage.report()
+    write_json(output / "collision_coverage.json", collision_coverage)
     blockers = []
     if not counts["supervised_samples"]:
         blockers.append("no_confirmed_training_eligible_samples")
@@ -225,12 +264,20 @@ def build(root, output, project, horizon=3., stride=.2, seed=2026,
         if not event_counts[hazard]:
             blockers.append("missing_positive_event:" + hazard)
     blockers.append("pilot_only_no_agreed_statistical_sample_size_or_complete_hazard_coverage")
+    for category in ("vehicle", "pedestrian", "static_object"):
+        cells = [c for c in collision_coverage["cells"] if c["category"] == category]
+        if not any(c["collision_callbacks"] for c in cells):
+            blockers.append("missing_collision_category:" + category)
+        if not any(c["eligible_negative_windows"] for c in cells):
+            blockers.append("missing_reviewed_safe_encounter_category:" + category)
     report = {"status": "pilot_not_training_ready", "counts": dict(counts), "labels": dict(labels),
               "by_policy": dict(policies), "by_split_and_category": dict(strata),
               "reason_counts": dict(reasons), "source_failures": failures, "duplicates": duplicates,
               "episodes": len(episodes), "independent_groups": len(splits["groups"]),
               "by_hazard_status_value": dict(hazard_counts), "event_callback_counts": dict(event_counts),
               "episode_outcomes": dict(episode_outcomes),
+              "collision_coverage_report": "collision_coverage.json",
+              "near_miss_policy": near_miss_policy,
               "blockers": blockers, "sample_content_digest": file_hash(output / "samples.jsonl"),
               "image_validation": "PNG signature/dimensions/hash; full decode belongs to loader/preflight",
               "legacy_audit_policy": "preserved in source; not promoted to horizon reviews"}
@@ -259,6 +306,7 @@ def build(root, output, project, horizon=3., stride=.2, seed=2026,
         "source_root": ".", "source_root_binding": "Supply the original source root to consumers; paths are root-relative",
         "configuration": {"horizon_seconds": horizon, "stride_seconds": stride, "seed": seed,
                           "training_negative_keep": negative_keep, "feature_profile": "rgb_speed_base_action_v1",
+                          "collision_category_version": CATEGORY_VERSION, "near_miss_policy": near_miss_policy,
                           "label_policy": "confirmed_only", "units": {"speed": "m/s", "time": "simulation seconds"}},
         "source_inventory": inventory, "source_inventory_digest": digest(inventory),
         "code": provenance, "artifacts": {str(p.relative_to(output)): file_hash(p) for p in sorted(output.rglob("*")) if p.is_file()},

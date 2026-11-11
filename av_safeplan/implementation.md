@@ -60,6 +60,13 @@
 - Cross-traffic or intersection conflict
 - Cut-in or lane intrusion, where supported
 - Optional occluded or late-emerging actor conflicts, if reliable
+- Pedestrian crossing and occluded emergence, with safe-yield counterparts (planned)
+- Static barriers/obstacles, with safe-stop/pass counterparts (planned)
+
+The approved scope includes all three collision categories: vehicle, pedestrian,
+and static object. Keep one combined collision target and evaluate each category
+separately. These added families are not implemented or validated merely by adding
+them to this plan. See [the broader collection and evaluation plan](docs/collection_plan.md).
 
 ### Red-Light Scenario Families
 
@@ -113,6 +120,10 @@ If SimLingo is not stable enough for large runs, use Behavior Agent for pipeline
   A frozen-SimLingo cross-traffic pilot also completed with score 100 and verified
   shared logs, controls, camera alignment, and complete video.
 - [ ] Review future-horizon target intervals with source-hash-bound human approval.
+- [ ] Implement category metadata/reporting and collect reviewed positive/safe
+  encounters for vehicles, pedestrians and static objects across independent groups.
+- [ ] Report category-by-policy coverage and held-out results; no broad safety
+  claim from the vehicle-only pilot. The eight junction episodes are one sub-batch.
 - [ ] Establish adequate independent train/validation/test coverage, including
   both hazard positives and adequate policy coverage, before training-readiness sign-off.
 

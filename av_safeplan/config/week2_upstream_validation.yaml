@@ -1,0 +1,24 @@
+version: 1
+town: Town12
+sources:
+  scenario_runner:
+    repository: https://github.com/carla-simulator/scenario_runner.git
+    revision: v0.9.15
+    directory: scenario_runner
+  leaderboard:
+    repository: https://github.com/carla-simulator/leaderboard.git
+    revision: leaderboard-2.0
+    directory: leaderboard
+families:
+  pedestrian:
+    selection: scenario
+    scenario_types: [PedestrianCrossing]
+    required_criteria: [CollisionTest]
+    expected_outcome: Validate an upstream pedestrian encounter and recording, not a guaranteed collision.
+    requires_live_validation: true
+  static_object:
+    selection: scenario
+    scenario_types: [ConstructionObstacle]
+    required_criteria: [CollisionTest]
+    expected_outcome: Validate upstream construction props and recording, not a guaranteed collision.
+    requires_live_validation: true

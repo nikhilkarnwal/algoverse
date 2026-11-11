@@ -9,6 +9,7 @@ import sys
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / "src"))
 from av_safeplan.dataset.sources import contained, file_hash, read_json, read_rows
+from av_safeplan.dataset.categories import classify, collision_metadata, Coverage
 
 
 def main():
@@ -37,6 +38,15 @@ def main():
         raw[episode_id] = {row["frame"]: row for row in read_rows(path)}
     evidence = {e["evidence_id"]: e for e in read_rows(dataset / "evidence.jsonl")}
     splits = read_json(dataset / "splits.json")
+    category_coverage = Coverage()
+    categorized = manifest.get("schema_version") == "av-safeplan-dataset-v2"
+    if categorized:
+        for event in evidence.values():
+            if event["event_type"] == "collision" and event.get("collision_classification") != classify(event["details"].get("other_actor_type")):
+                failures.append("collision_classification:" + event["evidence_id"])
+        for eid, ep in episodes.items():
+            category_coverage.episode({"id": eid, "policy": ep["policy"]}, splits["assignments"][eid],
+                                      [e for e in evidence.values() if e["episode_id"] == eid])
     groups = {}
     for assignment in splits["assignments"].values():
         groups.setdefault(assignment["group_id"], set()).add(assignment["split"])
@@ -47,6 +57,15 @@ def main():
         if sid in checked_samples:
             failures.append("duplicate_sample:" + sid)
         checked_samples.add(sid)
+        if categorized:
+            if sample.get("collision_metadata") != collision_metadata(sample["targets"]["collision"], evidence):
+                failures.append("collision_metadata:" + sid)
+            policy = manifest["configuration"]["near_miss_policy"]
+            expected = {"policy": policy, "status": "manual_review_waived" if policy == "waive_manual_review" else "unreviewed",
+                        "human_reviewed": False, "semantic_correctness": "unverified"}
+            if sample.get("near_miss_review") != expected:
+                failures.append("near_miss_provenance:" + sid)
+            category_coverage.sample(sample)
         row = raw[sample["episode_id"]][sample["frame"]]
         if set(sample["features"]) != {"rgb", "speed_mps", "base_action"}:
             failures.append("feature_whitelist:" + sid)
@@ -83,6 +102,8 @@ def main():
                             failures.append("image_size:" + image["path"])
                 except (OSError, ValueError):
                     failures.append("image_decode:" + image["path"])
+    if categorized and read_json(dataset / "collision_coverage.json") != category_coverage.report():
+        failures.append("collision_coverage_counts")
     if args.compare:
         for name in ("samples.jsonl", "splits.json", "evidence.jsonl"):
             if file_hash(dataset / name) != file_hash(args.compare / name):

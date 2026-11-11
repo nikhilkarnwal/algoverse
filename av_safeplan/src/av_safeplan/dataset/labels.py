@@ -1,6 +1,7 @@
 """Future-window targets with explicit review, censoring and interventions."""
 
 from av_safeplan.dataset.sources import digest
+from av_safeplan.dataset.categories import classify
 
 HAZARDS = ("collision", "red_light_violation")
 
@@ -25,6 +26,8 @@ def extract_evidence(episode):
                              "event_type": event.get("event_type"), "frame": frame,
                              "timestamp_seconds": stamp, "emitted_frame": row["frame"],
                              "details": event.get("details", {}), "source_sha256": episode["files"]["episode.jsonl"]})
+            if event.get("event_type") == "collision":
+                evidence[-1]["collision_classification"] = classify(event.get("details", {}).get("other_actor_type"))
     return evidence, sorted(set(errors))
 
 

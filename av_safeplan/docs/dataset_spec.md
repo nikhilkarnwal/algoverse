@@ -1,4 +1,4 @@
-# Week 2 dataset specification — v0.1
+# Week 2 dataset specification — schema v2 update
 
 Status: specification and converter implemented under the October 26 Week 2
 authorization. See `week2_runbook.md` for executable commands and acceptance
@@ -11,6 +11,22 @@ One sample is a decision at simulation time `t` in one episode: predict whether
 a collision or red-light violation occurs in `(t, t + H]`, conditioned on the
 observation available at `t` and the frozen base policy's proposed action.
 Keep two binary targets, not a mutually exclusive class: both hazards can occur.
+The approved collision scope includes vehicles, pedestrians and static objects.
+Keep one combined collision output, while retaining actor-category evidence for
+per-category coverage and evaluation. The current curated pilot contains vehicle
+collision positives only. Broader scenario collection, category normalization and
+evaluation reporting remain planned; see [the collection plan](collection_plan.md).
+Safe encounters are required for each category, and unknown/mixed actor categories
+must remain explicit. Category metadata is not an inference feature.
+
+Update: collision-event category mapping and category/policy/split coverage reporting
+are now implemented in schema v2; see [collision_categories.md](collision_categories.md).
+New scenario collection and verified safe-encounter categories remain pending.
+The user has waived manual review of near-miss flags. Builds can apply
+`--near-miss-policy waive_manual_review`: retain flags as heuristic/unverified,
+without their eligibility veto. This is not human correctness approval. Actual
+collision/red-light target reviews and all other eligibility gates remain required.
+The default exclusion mode is retained to reproduce old outputs.
 This is observed-rollout risk under the recorded policy, not a counterfactual
 estimate of what any alternative action would cause. A later action-selection
 layer needs an additional, separately approved data/learning design.

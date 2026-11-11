@@ -21,10 +21,12 @@ def main():
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--training-negative-keep", type=float, default=1.)
     parser.add_argument("--previous-splits", type=Path)
+    parser.add_argument("--near-miss-policy", choices=("exclude", "waive_manual_review"), default="exclude",
+                        help="Waiver retains heuristic flags but removes their veto; never approves hazard targets or legacy encroachment")
     args = parser.parse_args()
     report = build(args.source_root, args.output, PROJECT, args.horizon_seconds,
                    args.stride_seconds, args.seed, args.episode, args.previous_splits,
-                   args.training_negative_keep)
+                   args.training_negative_keep, args.near_miss_policy)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 

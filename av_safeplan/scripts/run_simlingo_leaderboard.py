@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import xml.etree.ElementTree as ElementTree
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -33,6 +34,8 @@ def main() -> int:
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--no-recording", action="store_true", help="Run the upstream baseline without shared episode recording")
     parser.add_argument("--no-images", action="store_true", help="Record shared telemetry but omit PNG frames and MP4")
+    parser.add_argument("--custom-catalog", type=Path,
+                        help="Opt in to custom TRAIN-only encounters and stop at first collision")
     arguments = parser.parse_args()
     if arguments.repetitions < 1:
         parser.error("--repetitions must be at least 1")
@@ -55,7 +58,21 @@ def main() -> int:
     )
     checkpoint = required_file(settings.simlingo.checkpoint, "SimLingo checkpoint")
     routes = required_file(arguments.routes, "Leaderboard routes file")
+    route_scenarios = ElementTree.parse(str(routes)).getroot().findall(".//scenario")
+    if any(s.get("type") == "AVSafePlanRepeatedEncounters" for s in route_scenarios) and not arguments.custom_catalog:
+        parser.error("Custom route XML requires --custom-catalog; refusing silent hazard omission")
+    custom_catalog = None
+    if arguments.custom_catalog:
+        if arguments.repetitions != 1 or arguments.no_recording:
+            parser.error("Custom encounters require one recorded attempt per fresh process")
+        from av_safeplan.scenarios.custom_catalog import load_catalog
+        custom_catalog = required_file(arguments.custom_catalog, "Custom encounter catalog")
+        load_catalog(custom_catalog)
+        evaluator = required_file(PROJECT_ROOT / "scripts/custom_leaderboard_entry.py", "Custom evaluator entry")
     output_directory = arguments.output_dir.expanduser().resolve()
+    if custom_catalog is not None and any((output_directory / name).exists()
+            for name in ("telemetry", "simulation_results.json", "custom_encounters", "pretrained")):
+        raise ValueError("Custom evaluator refuses an output directory containing an earlier attempt")
     output_directory.mkdir(parents=True, exist_ok=True)
 
     # Upstream tick() loads conversation.py relative to the working directory,
@@ -105,6 +122,10 @@ def main() -> int:
         command.extend(["--routes-subset", arguments.routes_subset])
 
     environment = os.environ.copy()
+    if custom_catalog is not None:
+        environment["AV_SAFEPLAN_CUSTOM_CATALOG"] = str(custom_catalog)
+    else:
+        environment.pop("AV_SAFEPLAN_CUSTOM_CATALOG", None)
     environment["ROUTES"] = str(routes)
     environment["WORK_DIR"] = str(simlingo_root)
     environment["SCENARIO_RUNNER_ROOT"] = str(simlingo_root / "scenario_runner")
